@@ -1,15 +1,23 @@
 // Builds the two published forms of Folio from src/:
 //   index.html          standalone page for GitHub Pages
 //   dist/artifact.html  page body for the claude.ai Artifact (the host adds the document skeleton)
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+// firebase.config.json, when present, turns on Google sign-in, sync and sharing in index.html.
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
-const page = read("./src/page.html")
+const build = (firebase) => read("./src/page.html")
   .replace("/*STYLES*/", () => read("./src/styles.css").trim())
-  .replace("/*SCRIPT*/", () => read("./src/app.js").trim());
+  .replace("/*SCRIPT*/", () => read("./src/app.js").trim().replace("/*FIREBASE_CONFIG*/null", () => JSON.stringify(firebase)));
+
+let firebase = null;
+if (existsSync(new URL("./firebase.config.json", import.meta.url))) {
+  firebase = JSON.parse(read("./firebase.config.json"));
+  for (const k of ["apiKey", "authDomain", "projectId", "appId"]) if (!firebase[k]) throw new Error(`firebase.config.json is missing "${k}"`);
+}
 
 mkdirSync(new URL("./dist/", import.meta.url), { recursive: true });
-writeFileSync(new URL("./dist/artifact.html", import.meta.url), page);
+writeFileSync(new URL("./dist/artifact.html", import.meta.url), build(null));
+const page = build(firebase);
 
 // Keep markup in <body> for valid HTML: split the head assets from the app markup.
 const cut = page.indexOf("</style>") + "</style>".length;
@@ -29,4 +37,4 @@ ${page.slice(cut).trim()}
 </html>
 `;
 writeFileSync(new URL("./index.html", import.meta.url), html);
-console.log("Built index.html and dist/artifact.html");
+console.log(`Built index.html${firebase ? ` (Firebase project ${firebase.projectId})` : " (no Firebase config, notes stay in the browser)"} and dist/artifact.html`);

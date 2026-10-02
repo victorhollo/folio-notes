@@ -1,0 +1,66 @@
+rules_version = '2';
+
+// Folio: private notes per user, shared notes by email invite or link.
+// Deploy with: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function me() {
+      return request.auth.token.email.lower();
+    }
+
+    // Private notes: only their owner.
+    match /users/{uid}/notes/{noteId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Shared notes: owner, ownerEmail, members (can open), editors (can change), link (off | view | edit).
+    match /shared/{noteId} {
+      function before() { return resource.data; }
+      function after() { return request.resource.data; }
+      function changed() { return after().diff(before()).affectedKeys(); }
+
+      function isOwner() { return signedIn() && before().owner == request.auth.uid; }
+      function isMember() { return signedIn() && me() in before().members; }
+      function isEditor() { return signedIn() && me() in before().editors; }
+      function linkOpen() { return signedIn() && before().link in ['view', 'edit']; }
+
+      function validAcl(d) {
+        return d.owner is string && d.ownerEmail is string
+          && d.members is list && d.editors is list
+          && d.members.size() <= 200 && d.editors.size() <= 200
+          && d.ownerEmail in d.members && d.ownerEmail in d.editors
+          && d.link in ['off', 'view', 'edit'];
+      }
+      function contentOnly() {
+        return changed().hasOnly(['title', 'blocks', 'tags', 'pinned', 'color', 'trashed', 'daily',
+                                  'del', 'ou', 'tu', 'mu', 'body', 'created', 'updated']);
+      }
+      // Opening a link adds you to members, and to editors when the link allows editing.
+      function joiningByLink() {
+        return linkOpen() && changed().hasOnly(['members', 'editors'])
+          && after().members.toSet() == before().members.toSet().union([me()].toSet())
+          && (after().editors == before().editors
+              || (before().link == 'edit' && after().editors.toSet() == before().editors.toSet().union([me()].toSet())));
+      }
+      // Anyone but the owner may remove themselves.
+      function leaving() {
+        return isMember() && !isOwner() && changed().hasOnly(['members', 'editors'])
+          && after().members.toSet() == before().members.toSet().difference([me()].toSet())
+          && after().editors.toSet() == before().editors.toSet().difference([me()].toSet());
+      }
+
+      allow get: if isMember() || linkOpen();
+      allow list: if isMember();
+      allow create: if signedIn() && after().owner == request.auth.uid && after().ownerEmail == me() && validAcl(after());
+      allow update: if (isOwner() && after().owner == before().owner && after().ownerEmail == before().ownerEmail && validAcl(after()))
+                    || (isEditor() && contentOnly())
+                    || joiningByLink()
+                    || leaving();
+      allow delete: if isOwner();
+    }
+  }
+}

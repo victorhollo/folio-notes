@@ -428,3 +428,25 @@ a.wl.missing { color: var(--ink-3); background: transparent; border: 1px dashed 
   .scrim { padding-top: 8vh; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* Share dialog (Firebase) */
+.share-modal { max-width: 520px; }
+.share { padding: 4px 18px 18px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.share h5 { margin: 8px 0 0; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.share-note { margin: 0; color: var(--ink-2); line-height: 1.5; }
+.share .primary { align-self: flex-start; }
+.share select, .share input { border: 1px solid var(--line-2); background: var(--card); border-radius: 9px; padding: 7px 9px; font-size: .85rem; min-width: 0; }
+.share-add { display: flex; gap: 8px; }
+.share-add input { flex: 1; }
+.share-add .primary { align-self: stretch; }
+.share-people { display: flex; flex-direction: column; gap: 2px; }
+.share-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; }
+.share-row .who { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: .9rem; }
+.share-row .who span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share .av { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: .8rem; }
+.share .role { color: var(--ink-2); font-size: .85rem; white-space: nowrap; }
+.share-link { display: flex; align-items: center; gap: 8px; }
+.share-link svg { width: 18px; height: 18px; flex: none; color: var(--ink-3); }
+.share-link select, .share-link .role { flex: 1; }
+.share-foot { display: flex; justify-content: flex-end; margin-top: 6px; }
+@media (max-width: 760px) { .share-add { flex-wrap: wrap; } .share-add input { flex-basis: 100%; } }
