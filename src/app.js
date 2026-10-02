@@ -11,7 +11,9 @@ const ALT = isMac ? "⌥" : "Alt";
 const SHIFT = isMac ? "⇧" : "Shift";
 const modKey = (e) => (isMac ? e.metaKey : e.ctrlKey);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const uid = (p = "n") => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const rnd = (k) => { try { return Array.from(crypto.getRandomValues(new Uint8Array(k)), (x) => (x % 36).toString(36)).join(""); } catch { return Math.random().toString(36).slice(2, 2 + k); } };
+// Note ids end up in share links, so they get enough randomness that nobody can guess one.
+const uid = (p = "n") => p + Date.now().toString(36) + rnd(p === "n" ? 16 : 6);
 const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const unescHtml = (s) => String(s).replace(/&(amp|lt|gt|quot|#39);/g, (m, k) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[k]));
 const num = (v) => (typeof v === "number" && isFinite(v) ? v : Number(v) || 0);
@@ -451,7 +453,7 @@ async function flush(id) {
   clearTimeout(dirty.get(id));
   const n = S.notes.get(id);
   const sp = n && SP[n.space];
-  if (!n || !sp || n._moving) { dirty.delete(id); return; }
+  if (!n || !sp || n._moving || !canEdit(n)) { dirty.delete(id); if (!dirty.size) setSave("saved"); return; }
   if (sp.local) {
     dirty.delete(id);
     const ok = saveLocalNow();
@@ -464,7 +466,7 @@ async function flush(id) {
   inflight.add(id);
   try {
     await sp.col.doc(id).set(sp.data ? sp.data(n) : serialize(n));
-    n._synced = true;
+    n._synced = true; n._aclNew = false;
     if (!dirty.size && !again.size) setSave("saved");
   } catch (e) {
     const code = e && e.code;
@@ -500,11 +502,12 @@ async function moveSpace(n, target, opts = {}) {
   const from = n.space, src = SP[from], dst = SP[target];
   if (FB.user && from === "shared" && !fbIsOwner(n)) return;
   const acl = n.acl;
-  if (FB.user && target === "shared") n.acl = fbNewAcl();
+  if (FB.user && target === "shared") { n.acl = fbNewAcl(); n._aclNew = true; }
   clearTimeout(dirty.get(n.id)); dirty.delete(n.id);
   n._moving = true; n.space = target;
   try {
     if (dst.local) saveLocalNow(); else await dst.col.doc(n.id).set(dst.data ? dst.data(n) : serialize(n));
+    n._aclNew = false;
     if (src.local) saveLocalNow(); else await src.col.doc(n.id).delete();
     if (FB.user && target === "private") n.acl = null;
     if (!opts.quiet) toast(target === "shared" ? "Shared. Everyone you give access to this page can open and edit it." : "Private again. Only you can see it.");
@@ -868,6 +871,7 @@ function renderTasks() {
       if (b.c) row.dataset.c = "1";
       const chk = el("button", { class: "chk", type: "button", role: "checkbox", "aria-checked": String(!!b.c), "aria-label": b.c ? "Mark as not done" : "Mark as done", html: `<span class="box">${I.check}</span>` });
       chk.addEventListener("click", () => {
+        if (!guardEdit(g.n)) return;
         b.c = !b.c; bump(g.n);
         row.dataset.c = b.c ? "1" : ""; if (!b.c) delete row.dataset.c;
         chk.setAttribute("aria-checked", String(b.c));
@@ -884,6 +888,11 @@ function renderTasks() {
   view.replaceChildren(inner);
 }
 function bump(n) { edited(n); }
+function guardEdit(n) {
+  if (!n || canEdit(n)) return true;
+  toast("You can view this note, but you don't have edit access.");
+  return false;
+}
 
 /* =====================================================================
    Notes: create, select, trash
@@ -911,7 +920,7 @@ function newNote(tplId = "blank", opts = {}) {
     title: opts.title != null ? opts.title : tpl.title ? tpl.title() : "",
     blocks: tpl.blocks(), tags: S.view === "tag" && !opts.silent ? [S.tag] : [], created: now, updated: now,
   }, opts.space || (S.view === "shared" && SP.shared && canWriteShared ? "shared" : E.note && opts.silent && (FB.user ? fbIsOwner(E.note) : canEdit(E.note)) ? E.note.space : "private"));
-  if (n.space === "shared" && FB.user) n.acl = opts.silent && E.note && E.note.acl ? { ...E.note.acl } : fbNewAcl();
+  if (n.space === "shared" && FB.user) { n.acl = opts.silent && E.note && E.note.acl ? { ...E.note.acl } : fbNewAcl(); n._aclNew = true; }
   S.notes.set(n.id, n);
   markDirty(n.id);
   if (opts.silent) return n;
@@ -943,7 +952,7 @@ function selectNote(id, opts = {}) {
   }
 }
 function moveToTrash(id) {
-  const n = S.notes.get(id); if (!n) return;
+  const n = S.notes.get(id); if (!n || !guardEdit(n)) return;
   n.trashed = Date.now(); edited(n);
   const vis = visibleNotes();
   const wide = matchMedia("(min-width: 761px)").matches;
@@ -952,7 +961,7 @@ function moveToTrash(id) {
   toast(`Moved “${n.title.trim() || "Untitled"}” to trash`, () => { n.trashed = null; edited(n); selectNote(id); });
 }
 function restoreNote(id) {
-  const n = S.notes.get(id); if (!n) return;
+  const n = S.notes.get(id); if (!n || !guardEdit(n)) return;
   n.trashed = null; edited(n);
   toast("Restored to All notes");
   const vis = visibleNotes();
@@ -972,7 +981,9 @@ function emptyTrash() {
 function duplicateNote(id) {
   const n = S.notes.get(id); if (!n) return;
   const now = Date.now();
-  const c = normalize(uid(), { ...serialize(n), title: (n.title || "Untitled") + " (copy)", blocks: n.blocks.map((b) => ({ ...b, id: uid("b") })), pinned: false, daily: null, created: now, updated: now }, n.space);
+  const space = n.space === "shared" && FB.user && !fbIsOwner(n) ? "private" : n.space;
+  const c = normalize(uid(), { ...serialize(n), title: (n.title || "Untitled") + " (copy)", blocks: n.blocks.map((b) => ({ ...b, id: uid("b") })), pinned: false, daily: null, created: now, updated: now }, space);
+  if (space === "shared" && FB.user) { c.acl = { ...n.acl }; c._aclNew = true; }
   S.notes.set(c.id, c); markDirty(c.id);
   selectNote(c.id); toast("Duplicated");
 }
@@ -2047,10 +2058,11 @@ function fbShareSummary(n) {
   const link = n.acl && n.acl.link !== "off" ? " and anyone with the link" : "";
   return fbIsOwner(n) ? `Shared with ${others} ${others === 1 ? "person" : "people"}${link}` : `Shared with you by ${n.acl ? n.acl.ownerEmail : "someone"}`;
 }
-// Only the owner writes the access fields, so an editor's save never undoes a change to who has access.
+// Access fields are written once, when the note becomes shared. After that only the share dialog
+// changes them, so a save from another device with an older copy never undoes a change to who has access.
 function fbData(n) {
   const data = serialize(n);
-  if (fbIsOwner(n)) for (const k of ACL_KEYS) data[k] = n.acl[k];
+  if (n._aclNew && fbIsOwner(n)) for (const k of ACL_KEYS) data[k] = n.acl[k];
   return data;
 }
 function fbCol(ref, q, merge) {
@@ -2134,7 +2146,7 @@ async function fbOpenFromHash() {
   const id = m[1];
   history.replaceState(null, "", location.pathname + location.search);
   const have = S.notes.get(id);
-  if (have) { S.view = have.trashed ? "trash" : "all"; selectNote(id); return; }
+  if (have && (canEdit(have) || !have.acl || have.acl.link !== "edit")) { S.view = have.trashed ? "trash" : "all"; selectNote(id); return; }
   let snap;
   try { snap = await FB.f.getDoc(sharedRef(id)); } catch { snap = null; }
   const acl = snap && snap.exists() ? aclOf(snap.data()) : null;
@@ -2144,7 +2156,7 @@ async function fbOpenFromHash() {
     if (acl.link === "edit") add.editors = FB.f.arrayUnion(FB.email);
     await FB.f.updateDoc(sharedRef(id), add);
   } catch { toast("Couldn't open that note. Try the link again."); return; }
-  const open = () => { if (S.notes.has(id)) { S.view = "shared"; selectNote(id); return true; } };
+  const open = () => { const n = S.notes.get(id); if (n && (!have || canEdit(n))) { S.view = "shared"; selectNote(id); return true; } };
   if (!open()) { let tries = 0; const t = setInterval(() => { if (open() || ++tries > 40) clearInterval(t); }, 150); }
 }
 window.addEventListener("hashchange", () => { if (loaded) fbOpenFromHash(); });
@@ -2501,7 +2513,7 @@ function openShortcuts() {
 }
 
 /* ---------- note actions ---------- */
-function togglePin() { const n = E.note; if (!n) return; n.pinned = !n.pinned; bump(n); refreshMeta(); renderSide(); toast(n.pinned ? "Pinned to the top" : "Unpinned"); }
+function togglePin() { const n = E.note; if (!n || !guardEdit(n)) return; n.pinned = !n.pinned; bump(n); refreshMeta(); renderSide(); toast(n.pinned ? "Pinned to the top" : "Unpinned"); }
 function noteMarkdown(n) { const tags = n.tags.length ? "\n\n" + n.tags.map((t) => "#" + t).join(" ") : ""; return (n.title.trim() ? `# ${n.title.trim()}\n\n` : "") + blocksToMd(n.blocks) + tags + "\n"; }
 async function copyNote() {
   const n = E.note; if (!n) return;
@@ -2609,7 +2621,7 @@ $("shareBtn").addEventListener("click", (e) => {
 $("focusBtn").addEventListener("click", toggleFocus);
 $("colorBtn").addEventListener("click", (e) => {
   const n = E.note; if (!n) return;
-  menuPop([{ section: "Label color" }, ...COLORS.map((c) => ({ label: COLOR_NAMES[c], sw: c, checked: n.color === c, run: () => { n.color = c; bump(n); refreshMeta(); renderSide(); } }))], e.currentTarget.getBoundingClientRect(), "right");
+  menuPop([{ section: "Label color" }, ...COLORS.map((c) => ({ label: COLOR_NAMES[c], sw: c, checked: n.color === c, run: () => { if (!guardEdit(n)) return; n.color = c; bump(n); refreshMeta(); renderSide(); } }))], e.currentTarget.getBoundingClientRect(), "right");
 });
 $("noteMenuBtn").addEventListener("click", (e) => {
   const n = E.note; if (!n) return;
