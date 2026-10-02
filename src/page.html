@@ -1,0 +1,118 @@
+<title>Folio Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/*STYLES*/
+</style>
+
+<div class="app" id="app" data-pane="list">
+  <!-- ============ Cover / sidebar ============ -->
+  <nav class="cover" id="cover" aria-label="Notebook">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><span class="brand-name">Folio</span></div>
+    <div class="cover-btn-new">
+      <button class="primary" id="newBtn" type="button" title="New note (Alt+N)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New note
+      </button>
+      <button class="icon-btn square" id="tplBtn" type="button" aria-label="New from template" title="New from template">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><path d="M16.5 13.5v6M13.5 16.5h6"/></svg>
+      </button>
+    </div>
+    <div class="cover-scroll">
+      <div class="nav" id="navMain"></div>
+      <div class="nav">
+        <div class="nav-label"><span>Tags</span></div>
+        <div id="navTags"></div>
+      </div>
+    </div>
+    <div class="cover-foot">
+      <span class="sync" id="sync" data-state="boot"><i></i><span id="syncText">Opening…</span></span>
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="Theme" title="Theme"></button>
+      <button class="icon-btn" id="moreBtn" type="button" aria-label="Backup and settings" title="Backup and settings">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ============ Drawer / list ============ -->
+  <aside class="drawer" aria-label="Notes">
+    <div class="drawer-head">
+      <div class="drawer-title">
+        <button class="icon-btn menu-btn" id="menuBtn" type="button" aria-label="Open notebook menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+        </button>
+        <h2 id="viewTitle">All notes</h2>
+        <span class="count" id="viewCount"></span>
+        <span class="spacer"></span>
+        <button class="sort-btn" id="sortBtn" type="button" title="Change sort order">Edited ↓</button>
+      </div>
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Search notes" autocomplete="off" aria-label="Search notes">
+      </label>
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+
+  <!-- ============ Sheet / editor ============ -->
+  <main class="sheet" id="sheet" aria-label="Editor">
+    <div class="sheet-bar" id="sheetBar" hidden>
+      <button class="icon-btn back-btn" id="backBtn" type="button" aria-label="Back to notes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="crumbs"><span id="crumbView">All notes</span><span>/</span><b id="crumbNote">Untitled</b></div>
+      <span class="spacer"></span>
+      <div class="peers" id="peers" hidden></div>
+      <button class="share-btn" id="shareBtn" type="button" hidden></button>
+      <span class="stat hide-sm" id="statWords"></span>
+      <span class="stat" id="statSave"></span>
+      <button class="icon-btn" id="pinBtn" type="button" aria-pressed="false" aria-label="Pin note" title="Pin to top">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l2.6 3.2a1 1 0 0 1-.8 1.6H7.2a1 1 0 0 1-.8-1.6z"/></svg>
+      </button>
+      <button class="icon-btn" id="colorBtn" type="button" aria-label="Label color" title="Label color">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.6" id="colorDot" fill="none"/></svg>
+      </button>
+      <button class="icon-btn" id="focusBtn" type="button" aria-pressed="false" aria-label="Focus mode" title="Focus mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg>
+      </button>
+      <button class="icon-btn" id="noteMenuBtn" type="button" aria-label="More note actions" title="More">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+      </button>
+    </div>
+
+    <div class="sheet-scroll" id="sheetScroll" hidden>
+      <div class="page" id="page">
+        <div class="trash-banner" id="trashBanner" hidden>
+          <span>This note is in the trash. It will be deleted 30 days after it was moved there.</span>
+          <button class="ghost" id="restoreBtn" type="button">Restore</button>
+          <button class="ghost danger" id="purgeBtn" type="button">Delete forever</button>
+        </div>
+        <textarea class="title-input" id="titleInput" rows="1" placeholder="Untitled" aria-label="Note title" autocomplete="off" spellcheck="true"></textarea>
+        <div class="note-meta" id="noteMeta"></div>
+        <div class="taskbar" id="taskbar" hidden><span class="bar"><i></i></span><span id="taskText"></span></div>
+        <div class="blocks" id="blocks"></div>
+        <button class="add-below" id="addBelow" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add a block, or type / anywhere
+        </button>
+        <div class="backlinks" id="backlinks" hidden></div>
+      </div>
+    </div>
+
+    <div class="dock" id="dock" hidden role="toolbar" aria-label="Block type"></div>
+
+    <div class="tasks-view" id="tasksView" hidden></div>
+
+    <div class="blank" id="blank">
+      <div class="blank-inner" id="blankInner">
+        <h2>Opening your notebook…</h2>
+      </div>
+    </div>
+  </main>
+</div>
+
+<input type="file" id="importInput" accept=".json,.md,.markdown,.txt,application/json,text/markdown,text/plain" multiple hidden>
+<div id="layer"></div>
+
+<script>
+/*SCRIPT*/
+</script>
