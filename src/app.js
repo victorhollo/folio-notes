@@ -724,7 +724,7 @@ function renderList() {
     const box = el("div", { class: "list-empty" });
     if (q.length) box.append(el("strong", { text: "Nothing matches" }), el("span", { text: `No note in ${viewName()} contains “${S.query.trim()}”.` }), el("button", { class: "link-btn", type: "button", text: "Clear search", onclick: clearSearch }));
     else if (S.view === "trash") box.append(el("strong", { text: "Trash is empty" }), el("span", { text: "Deleted notes wait here for 30 days, so you can bring them back." }));
-    else if (S.view === "shared") box.append(el("strong", { text: "Nothing shared yet" }), el("span", { text: "Notes here can be opened and edited by everyone you give access to this page. Start one with New note, or move a note here with the Share button above it." }), canWriteShared ? el("button", { class: "link-btn", type: "button", text: "Start a shared note", onclick: () => newNote() }) : null);
+    else if (S.view === "shared") box.append(el("strong", { text: "Nothing shared yet" }), el("span", { text: "Notes here can be opened and edited by everyone you give access to this page. Start one with New note, or move a note here with the Share button above it." }), ...(canWriteShared ? [el("button", { class: "link-btn", type: "button", text: "Start a shared note", onclick: () => newNote() })] : []));
     if (S.view === "shared" && FB.user) box.querySelector("span").textContent = "Notes you share, and notes people share with you, show up here. Start one with New note, or share a note with the Share button above it.";
     else if (S.view === "pinned") box.append(el("strong", { text: "Nothing pinned" }), el("span", { text: "Pin a note with the pin button above it to keep it close." }));
     else if (S.view === "tag") box.append(el("strong", { text: "No notes with this tag" }));
@@ -751,7 +751,7 @@ function renderNav() {
     item("all", I.notes, "All notes", notes.length, () => setView("all"), S.view === "all"),
     item("today", I.today, "Today", null, openToday, false),
     item("tasks", I.tasks, "Tasks", open || null, () => setView("tasks"), S.view === "tasks"),
-    SP.shared ? item("shared", I.people, "Shared", notes.filter((n) => n.space === "shared").length || null, () => setView("shared"), S.view === "shared") : null,
+    ...(SP.shared ? [item("shared", I.people, "Shared", notes.filter((n) => n.space === "shared").length || null, () => setView("shared"), S.view === "shared")] : []),
     item("pinned", I.pin, "Pinned", notes.filter((n) => n.pinned).length || null, () => setView("pinned"), S.view === "pinned"),
     item("trash", I.trash, "Trash", trashCount || null, () => setView("trash"), S.view === "trash"),
   );
@@ -2084,7 +2084,7 @@ async function startFirebase() {
     Object.assign(FB, { a, f, auth: a.getAuth(fa), db: f.getFirestore(fa), ready: true });
   } catch {
     startLocal();
-    setSync("local", "In this browser (sign-in unavailable)");
+    $("sync").title = "Sign-in couldn't load, so notes are kept in this browser. Reload to try again.";
     return;
   }
   let first = true;
@@ -2216,7 +2216,7 @@ function openShare(n) {
   const people = el("div", { class: "share-people" });
   for (const m of [acl.ownerEmail, ...acl.members.filter((x) => x !== acl.ownerEmail)]) {
     const r = roleOf(m);
-    const who = el("span", { class: "who" }, el("span", { class: "av", text: (m[0] || "?").toUpperCase() }), el("span", { text: m + (m === FB.email ? " (you)" : "") }));
+    const who = el("span", { class: "who" }, el("span", { class: "av", text: (m[0] || "?").toUpperCase() }), el("span", { text: m + (m === FB.email ? " (you)" : ""), title: m }));
     let ctl;
     if (r === "owner") ctl = el("span", { class: "role", text: "Owner" });
     else if (owner) {
@@ -2232,7 +2232,7 @@ function openShare(n) {
   }
   body.append(el("h5", { text: "People with access" }), people);
 
-  const linkText = { off: "Only people added above can open the link", view: "Anyone signed in with the link can view", edit: "Anyone signed in with the link can edit" };
+  const linkText = { off: "Only people added above", view: "Anyone with the link can view", edit: "Anyone with the link can edit" };
   let linkCtl;
   if (owner) {
     linkCtl = el("select", { "aria-label": "Link access" }, ...Object.entries(linkText).map(([v, t]) => el("option", { value: v, text: t })));
