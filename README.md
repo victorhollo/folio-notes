@@ -43,7 +43,7 @@ Without a Firebase config, the GitHub Pages version keeps notes in your browser 
 
 1. In the [Firebase console](https://console.firebase.google.com/), open your project and add a **Web app**. Copy its config into `firebase.config.json` at the repo root (see `firebase.config.example.json`). This config identifies the project and is safe to publish; access is controlled by the security rules.
 2. **Authentication → Sign-in method:** enable **Google**. Under **Settings → Authorized domains**, add `victorhollo.github.io`.
-3. **Firestore Database:** create a database, then deploy the rules with `npx firebase-tools deploy --only firestore:rules --project <your-project-id>`.
+3. **Firestore Database:** create a database, then deploy the rules with `npx firebase-tools deploy --only firestore:rules` (the project is set in `.firebaserc`).
 4. Run `node build.mjs` and commit `index.html`.
 
 Data layout: private notes live at `users/{uid}/notes/{noteId}`; shared notes at `shared/{noteId}` with `owner`, `ownerEmail`, `members`, `editors` and `link` fields.

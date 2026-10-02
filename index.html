@@ -698,7 +698,7 @@ const WORD_RE = /[\p{L}\p{N}'’-]+/gu;
 const LS_NOTES = "folio.notes.v1";
 const TRASH_DAYS = 30;
 // The GitHub Pages build fills this in from firebase.config.json (see build.mjs). null means no Firebase.
-const FB_CONFIG = null;
+const FB_CONFIG = {"apiKey":"AIzaSyC575ClHIpZ2wWhl3Q1ee1rOiCXPAuu0Yg","authDomain":"folio-b274f.firebaseapp.com","projectId":"folio-b274f","storageBucket":"folio-b274f.firebasestorage.app","messagingSenderId":"523453476626","appId":"1:523453476626:web:e3356806ff17932ecb0dcb","measurementId":"G-J5T3EPDDC6"};
 
 const B = (t, h = "", extra = {}) => { const b = { id: uid("b"), t, h, i: 0, ...extra }; if (t === "todo" && b.c == null) b.c = false; return b; };
 const dailyBlocks = () => [B("h3", "Top three"), B("todo"), B("todo"), B("todo"), B("h3", "Notes"), B("p"), B("h3", "Wins today"), B("ul")];
