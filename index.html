@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Folio, a fast Markdown notebook with checklists, #tags, pins and search.">
+<style>html{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}[hidden]{display:none!important}</style>
+<title>Folio Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Literata:ital,opsz,wght@0,7..72,400..700;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<style>
+/* Layout: index-card notebook. Left: the card drawer (search, tags, cards). Right: one open sheet, set like a page. */
+:root {
+  --bg: #E7EBF0;
+  --panel: #F4F6F9;
+  --paper: #FFFFFF;
+  --ink: #172031;
+  --ink-2: #5B6678;
+  --ink-3: #8A94A4;
+  --line: #D4DBE4;
+  --accent: #2347C9;
+  --accent-soft: #DCE3FB;
+  --hi: #FFD84D;
+  --hi-ink: #172031;
+  --danger: #B42318;
+  --c-sun: #E9A400;
+  --c-sage: #4F9A6A;
+  --c-sky: #2F86C9;
+  --c-rose: #D4546E;
+  --c-lilac: #8A62CF;
+  --shadow: 0 1px 2px rgb(23 32 49 / .06), 0 8px 24px rgb(23 32 49 / .06);
+  --f-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Literata", "Iowan Old Style", Georgia, serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E131B; --panel: #131923; --paper: #19202B; --ink: #E5EAF1; --ink-2: #94A0B2; --ink-3: #657084;
+    --line: #262F3E; --accent: #87A2FF; --accent-soft: #1F2A4A; --hi: #D9AE2E; --hi-ink: #10141B; --danger: #F0857A;
+    --c-sun: #E8B23A; --c-sage: #6DBB88; --c-sky: #5BA8E3; --c-rose: #E87891; --c-lilac: #A888E3;
+    --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 8px 24px rgb(0 0 0 / .25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E131B; --panel: #131923; --paper: #19202B; --ink: #E5EAF1; --ink-2: #94A0B2; --ink-3: #657084;
+  --line: #262F3E; --accent: #87A2FF; --accent-soft: #1F2A4A; --hi: #D9AE2E; --hi-ink: #10141B; --danger: #F0857A;
+  --c-sun: #E8B23A; --c-sage: #6DBB88; --c-sky: #5BA8E3; --c-rose: #E87891; --c-lilac: #A888E3;
+  --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 8px 24px rgb(0 0 0 / .25);
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { height: 100%; }
+body { height: 100%; background: var(--bg); color: var(--ink); font-family: var(--f-display); overflow: hidden; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+svg { display: block; }
+
+.app { display: grid; grid-template-columns: minmax(290px, 350px) minmax(0, 1fr); height: 100%; }
+
+/* ---------- Drawer (list pane) ---------- */
+.drawer { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--line); }
+.drawer-head { display: flex; flex-direction: column; gap: 14px; padding: 20px 18px 12px; }
+.brand-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand h1 { margin: 0; font-size: 1.75rem; font-weight: 800; letter-spacing: -.03em; font-variation-settings: "opsz" 96; }
+.brand .count { font-family: var(--f-mono); font-size: .72rem; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.new-btn { display: inline-flex; align-items: center; gap: 6px; border: 0; background: var(--accent); color: var(--paper); padding: 8px 12px 8px 10px; border-radius: 10px; font-weight: 600; font-size: .9rem; }
+.new-btn:hover { filter: brightness(1.08); }
+.new-btn svg { width: 16px; height: 16px; }
+
+.search { position: relative; }
+.search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: var(--ink-3); pointer-events: none; }
+.search input { width: 100%; border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: 9px 52px 9px 34px; font-size: .92rem; font-family: var(--f-display); }
+.search input::placeholder { color: var(--ink-3); }
+.search kbd { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); }
+kbd { font-family: var(--f-mono); font-size: .68rem; color: var(--ink-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 5px; background: var(--panel); white-space: nowrap; }
+
+.tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag-chip { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 3px 10px; font-size: .78rem; color: var(--ink-2); display: inline-flex; gap: 6px; align-items: baseline; }
+.tag-chip .n { font-family: var(--f-mono); font-size: .68rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.tag-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.tag-chip[aria-pressed="true"] .n { color: var(--paper); opacity: .7; }
+
+.list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 24px; display: flex; flex-direction: column; gap: 2px; }
+.list-label { font-family: var(--f-mono); font-size: .66rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); padding: 12px 10px 6px; }
+.card { position: relative; text-align: left; border: 0; background: transparent; border-radius: 12px; padding: 11px 12px 12px 26px; display: flex; flex-direction: column; gap: 4px; width: 100%; transition: background .15s; }
+.card:hover { background: color-mix(in srgb, var(--paper) 70%, transparent); }
+.card[aria-current="true"] { background: var(--paper); box-shadow: var(--shadow); }
+.card .dot { position: absolute; left: 11px; top: 17px; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.card .t { font-weight: 650; font-size: .98rem; line-height: 1.25; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .t.untitled { color: var(--ink-3); font-weight: 500; font-style: italic; }
+.card[aria-current="true"] .t span.hl-wrap { background: linear-gradient(transparent 55%, color-mix(in srgb, var(--hi) 70%, transparent) 55%, color-mix(in srgb, var(--hi) 70%, transparent) 92%, transparent 92%); }
+.card .s { font-family: var(--f-body); font-size: .84rem; line-height: 1.45; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.card .m { display: flex; gap: 8px; align-items: center; font-family: var(--f-mono); font-size: .68rem; color: var(--ink-3); margin-top: 2px; }
+.card .m svg { width: 12px; height: 12px; color: var(--accent); }
+mark { background: var(--hi); color: var(--hi-ink); border-radius: 3px; padding: 0 1px; }
+
+.list-empty { padding: 32px 14px; color: var(--ink-2); font-size: .92rem; line-height: 1.5; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.list-empty strong { color: var(--ink); font-size: 1rem; }
+.link-btn { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 600; }
+
+.drawer-foot { border-top: 1px solid var(--line); padding: 10px 18px calc(10px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; justify-content: space-between; gap: 10px; font-family: var(--f-mono); font-size: .7rem; color: var(--ink-3); }
+.sync { display: inline-flex; align-items: center; gap: 7px; }
+.sync i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); }
+.sync[data-state="cloud"] i { background: var(--c-sage); }
+.sync[data-state="local"] i { background: var(--c-sun); }
+.sync[data-state="error"] i { background: var(--danger); }
+
+/* ---------- Sheet (editor pane) ---------- */
+.sheet { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--paper); }
+.toolbar { display: flex; align-items: center; gap: 6px; padding: 12px 18px; border-bottom: 1px solid var(--line); min-height: 58px; }
+.toolbar .spacer { flex: 1; }
+.icon-btn { border: 0; background: transparent; width: 34px; height: 34px; border-radius: 9px; display: inline-grid; place-items: center; color: var(--ink-2); flex: none; }
+.icon-btn:hover { background: var(--panel); color: var(--ink); }
+.icon-btn svg { width: 18px; height: 18px; }
+.icon-btn[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.icon-btn.danger:hover { color: var(--danger); }
+.back-btn { display: none; }
+
+.seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 2px; }
+.seg button { border: 0; background: transparent; padding: 5px 12px; border-radius: 8px; font-size: .82rem; font-weight: 600; color: var(--ink-2); }
+.seg button[aria-pressed="true"] { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
+
+.swatch-wrap { position: relative; }
+.swatch-btn i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink-3); display: block; }
+.swatches { position: absolute; top: 40px; right: 0; z-index: 5; background: var(--paper); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 12px; padding: 8px; display: flex; gap: 6px; }
+.swatches button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; padding: 0; background: var(--sw); }
+.swatches button[data-c=""] { background: transparent; border: 2px dashed var(--line); }
+.swatches button[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.page { max-width: 72ch; margin: 0 auto; padding: 40px 32px 80px; display: flex; flex-direction: column; gap: 16px; }
+.meta-line { font-family: var(--f-mono); font-size: .72rem; color: var(--ink-3); display: flex; gap: 14px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.title-input { border: 0; background: transparent; padding: 0; font-family: var(--f-display); font-size: clamp(1.7rem, 3.4vw, 2.4rem); font-weight: 750; letter-spacing: -.03em; line-height: 1.1; width: 100%; font-variation-settings: "opsz" 96; }
+.title-input::placeholder { color: var(--ink-3); }
+.title-input:focus { outline: none; }
+.body-input { border: 0; background: transparent; padding: 0; resize: none; width: 100%; min-height: 50vh; font-family: var(--f-body); font-size: 1.06rem; line-height: 1.7; overflow: hidden; }
+.body-input::placeholder { color: var(--ink-3); font-style: italic; }
+.body-input:focus { outline: none; }
+
+.preview { font-family: var(--f-body); font-size: 1.06rem; line-height: 1.7; overflow-wrap: anywhere; min-width: 0; }
+.preview > :first-child { margin-top: 0; }
+.preview h1, .preview h2, .preview h3 { font-family: var(--f-display); letter-spacing: -.02em; line-height: 1.2; text-wrap: balance; margin: 1.4em 0 .4em; }
+.preview h1 { font-size: 1.6rem; } .preview h2 { font-size: 1.3rem; } .preview h3 { font-size: 1.1rem; }
+.preview p { margin: 0 0 .9em; }
+.preview a { color: var(--accent); }
+.preview ul, .preview ol { padding-left: 1.4em; margin: 0 0 .9em; }
+.preview li { margin: .15em 0; }
+.preview li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.4em; }
+.preview li > input[type="checkbox"] { width: 1.05em; height: 1.05em; accent-color: var(--accent); vertical-align: -.15em; margin: 0 .55em 0 0; cursor: pointer; }
+.preview li:has(> input:checked) { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--ink-3); }
+.preview blockquote { margin: 0 0 .9em; padding: .2em 0 .2em 1em; border-left: 3px solid var(--hi); color: var(--ink-2); font-style: italic; }
+.preview code { font-family: var(--f-mono); font-size: .86em; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: .05em .35em; }
+.preview pre { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; }
+.preview pre code { background: none; border: 0; padding: 0; }
+.preview hr { border: 0; border-top: 1px solid var(--line); margin: 1.6em 0; }
+.preview .htag { font-family: var(--f-mono); font-size: .82em; color: var(--accent); background: var(--accent-soft); border-radius: 5px; padding: .05em .35em; }
+.preview table { border-collapse: collapse; display: block; overflow-x: auto; max-width: 100%; }
+.preview th, .preview td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+
+.statusbar { border-top: 1px solid var(--line); padding: 9px 18px calc(9px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--f-mono); font-size: .7rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.statusbar .save { margin-left: auto; }
+
+.blank { flex: 1; display: grid; place-items: center; padding: 32px 24px; }
+.blank-inner { max-width: 360px; display: flex; flex-direction: column; gap: 14px; }
+.blank h2 { margin: 0; font-size: 1.5rem; letter-spacing: -.02em; text-wrap: balance; }
+.blank p { margin: 0; color: var(--ink-2); line-height: 1.55; font-family: var(--f-body); }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: center; font-size: .85rem; color: var(--ink-2); margin-top: 6px; }
+.keys span:nth-child(odd) { display: flex; gap: 4px; }
+
+/* ---------- Toast ---------- */
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--paper); border-radius: 12px; padding: 10px 10px 10px 16px; display: flex; gap: 14px; align-items: center; font-size: .9rem; box-shadow: var(--shadow); z-index: 20; max-width: calc(100% - 32px); }
+.toast button { border: 0; background: color-mix(in srgb, var(--paper) 16%, transparent); color: var(--paper); border-radius: 8px; padding: 5px 12px; font-weight: 600; }
+
+/* ---------- Phone ---------- */
+@media (max-width: 760px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .drawer, .sheet { grid-area: 1 / 1; border-right: 0; }
+  .app[data-view="list"] .sheet { display: none; }
+  .app[data-view="editor"] .drawer { display: none; }
+  .back-btn { display: inline-grid; }
+  .page { padding: 24px 18px 64px; }
+  .toolbar { padding: 10px 12px; }
+  .drawer-head { padding: 16px 16px 10px; }
+  .search kbd { display: none; }
+  .search input { padding-right: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="app" id="app" data-view="list">
+  <aside class="drawer" aria-label="Notes">
+    <div class="drawer-head">
+      <div class="brand-row">
+        <div class="brand">
+          <h1>Folio</h1>
+          <span class="count" id="count">№ —</span>
+        </div>
+        <button class="new-btn" id="newBtn" type="button" title="New note (Alt+N)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          New
+        </button>
+      </div>
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Search notes" autocomplete="off" aria-label="Search notes">
+        <kbd id="kbdK">⌘K</kbd>
+      </label>
+      <div class="tags" id="tags" aria-label="Filter by tag"></div>
+    </div>
+    <div class="list" id="list" role="list"></div>
+    <div class="drawer-foot">
+      <span class="sync" id="sync" data-state="boot"><i></i><span id="syncText">Opening notebook…</span></span>
+      <span id="tagHint">#tags in text</span>
+    </div>
+  </aside>
+
+  <main class="sheet" aria-label="Editor">
+    <div class="toolbar" id="toolbar" hidden>
+      <button class="icon-btn back-btn" id="backBtn" type="button" aria-label="Back to notes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="seg" role="group" aria-label="Mode">
+        <button type="button" id="modeWrite" aria-pressed="true">Write</button>
+        <button type="button" id="modeRead" aria-pressed="false">Read</button>
+      </div>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="pinBtn" type="button" aria-pressed="false" aria-label="Pin note" title="Pin to top">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.8V5h6v5.8l2.6 3.2a1 1 0 0 1-.8 1.6H7.2a1 1 0 0 1-.8-1.6z"/><path d="M8 5h8"/></svg>
+      </button>
+      <div class="swatch-wrap">
+        <button class="icon-btn swatch-btn" id="colorBtn" type="button" aria-label="Label color" title="Label color" aria-expanded="false"><i id="colorDot"></i></button>
+        <div class="swatches" id="swatches" hidden role="group" aria-label="Choose a label color"></div>
+      </div>
+      <button class="icon-btn" id="copyBtn" type="button" aria-label="Copy note text" title="Copy as Markdown">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>
+      </button>
+      <button class="icon-btn danger" id="delBtn" type="button" aria-label="Delete note" title="Delete">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>
+      </button>
+    </div>
+
+    <div class="scroll" id="scroll" hidden>
+      <div class="page">
+        <div class="meta-line" id="metaLine"></div>
+        <input class="title-input" id="titleInput" type="text" placeholder="Untitled" aria-label="Note title" autocomplete="off">
+        <textarea class="body-input" id="bodyInput" placeholder="Start writing. Markdown works, - [ ] makes a checkbox, #tags group notes." aria-label="Note text"></textarea>
+        <div class="preview" id="preview" hidden></div>
+      </div>
+    </div>
+
+    <div class="statusbar" id="statusbar" hidden>
+      <span id="stWords">0 words</span>
+      <span id="stRead">under 1 min read</span>
+      <span id="stTasks"></span>
+      <span class="save" id="stSave"></span>
+    </div>
+
+    <div class="blank" id="blank">
+      <div class="blank-inner">
+        <h2 id="blankTitle">Opening your notebook…</h2>
+        <p id="blankText">Your notes will appear in the drawer on the left.</p>
+        <div class="keys">
+          <span><kbd>Alt</kbd><kbd>N</kbd></span><span>New note</span>
+          <span><kbd class="mod">⌘</kbd><kbd>K</kbd></span><span>Search</span>
+          <span><kbd class="mod">⌘</kbd><kbd>E</kbd></span><span>Switch Write / Read</span>
+          <span><kbd>Esc</kbd></span><span>Clear search</span>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast" hidden role="status" aria-live="polite"><span id="toastMsg"></span><button type="button" id="toastBtn" hidden>Undo</button></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  if (!isMac) { $("kbdK").textContent = "Ctrl K"; document.querySelectorAll("kbd.mod").forEach(k => k.textContent = "Ctrl"); }
+
+  const COLORS = ["", "sun", "sage", "sky", "rose", "lilac"];
+  const COLOR_NAMES = { "": "No label", sun: "Sun", sage: "Sage", sky: "Sky", rose: "Rose", lilac: "Lilac" };
+  const LS_KEY = "folio.notes.v1";
+  const TAG_RE = /(^|[\s(])#([\p{L}\p{N}_-]{1,32})/gu;
+  const TASK_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)\[( |x|X)\]/gm;
+
+  const state = {
+    mode: "boot",           // boot | cloud | local
+    notes: new Map(),       // id -> {id,title,body,pinned,color,created,updated}
+    selected: null,
+    query: "",
+    tag: null,
+    reading: false,
+  };
+
+  /* ---------------- Persistence ---------------- */
+  let col = null;                     // db collection in cloud mode
+  const dirty = new Map();            // id -> timer
+  const inflight = new Set();
+  const again = new Set();
+  let saveState = "";                 // "", saving, saved, error
+
+  const newId = () => "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const clean = (n) => ({ title: n.title, body: n.body, pinned: !!n.pinned, color: n.color || "", created: n.created, updated: n.updated });
+  const normalize = (id, d) => ({
+    id, title: typeof d.title === "string" ? d.title : "", body: typeof d.body === "string" ? d.body : "",
+    pinned: !!d.pinned, color: COLORS.includes(d.color) ? d.color : "",
+    created: Number(d.created) || Date.now(), updated: Number(d.updated) || Number(d.created) || Date.now(),
+  });
+
+  function loadLocal() {
+    try { const raw = localStorage.getItem(LS_KEY); if (raw) return JSON.parse(raw); } catch {}
+    return null;
+  }
+  function saveLocalNow() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify([...state.notes.values()].map(n => ({ id: n.id, ...clean(n) })))); return true; }
+    catch { return false; }
+  }
+
+  function markDirty(id) {
+    clearTimeout(dirty.get(id));
+    dirty.set(id, setTimeout(() => flush(id), 650));
+    setSave("saving");
+  }
+
+  async function flush(id) {
+    clearTimeout(dirty.get(id));
+    if (state.mode === "local") {
+      dirty.delete(id);
+      setSave(saveLocalNow() ? "saved" : "error");
+      return;
+    }
+    if (inflight.has(id)) { again.add(id); return; }
+    const n = state.notes.get(id);
+    dirty.delete(id);
+    if (!n || !col) return;
+    inflight.add(id);
+    try {
+      await col.doc(id).set(clean(n));
+      if (!dirty.size && !again.size) setSave("saved");
+    } catch (e) {
+      setSave("error");
+      showToast(e && e.code === "quota_exceeded"
+        ? "Notebook is full. Delete a few notes to save new ones."
+        : "Couldn't save that change. It stays in this tab, so keep the page open and try again.");
+    } finally {
+      inflight.delete(id);
+      if (again.delete(id)) flush(id);
+    }
+  }
+  function flushAll() { for (const id of [...dirty.keys()]) flush(id); }
+
+  async function removeStored(id) {
+    if (state.mode === "local") { saveLocalNow(); return; }
+    try { await col.doc(id).delete(); } catch { showToast("Couldn't delete that note. Try again."); }
+  }
+
+  /* ---------------- Boot ---------------- */
+  function welcomeNotes() {
+    const now = Date.now();
+    return [{
+      id: newId(), pinned: true, color: "sky", created: now, updated: now,
+      title: "Welcome to Folio",
+      body: "Notes save as you type. Here is what this notebook can do:\n\n- [x] Write in **Markdown**, then switch to *Read* to see it set\n- [ ] Tick checkboxes right in Read mode\n- [ ] Add #tags anywhere and filter by them in the drawer\n- [ ] Pin a note to keep it at the top\n\n> Press Alt+N for a new note. This welcome note is an example, delete it whenever you like.\n\n#example",
+    }];
+  }
+
+  function startLocal(reason) {
+    state.mode = "local";
+    const stored = loadLocal();
+    const list = Array.isArray(stored) ? stored : welcomeNotes();
+    state.notes = new Map(list.filter(n => n && n.id).map(n => [n.id, normalize(n.id, n)]));
+    if (!Array.isArray(stored)) saveLocalNow();
+    setSync("local", reason || "Saved on this device");
+    afterLoad();
+  }
+
+  function startCloud(db) {
+    state.mode = "cloud";
+    col = db.collection("notes");
+    setSync("cloud", "Synced to your account");
+    let first = true;
+    col.onSnapshot((snap) => {
+      const seen = new Set();
+      for (const d of snap.docs) {
+        seen.add(d.id);
+        if (dirty.has(d.id) || inflight.has(d.id)) continue;
+        const incoming = normalize(d.id, d.data() || {});
+        const cur = state.notes.get(d.id);
+        state.notes.set(d.id, incoming);
+        if (d.id === state.selected && cur && (cur.body !== incoming.body || cur.title !== incoming.title)) syncEditorFromNote(true);
+      }
+      for (const id of [...state.notes.keys()]) {
+        if (!seen.has(id) && !dirty.has(id) && !inflight.has(id)) state.notes.delete(id);
+      }
+      if (state.selected && !state.notes.has(state.selected)) select(null);
+      if (first && !snap.metadata.fromCache) first = false;
+      afterLoad();
+    }, () => {
+      setSync("error", "Sync paused. Reload to reconnect");
+    });
+  }
+
+  let loaded = false;
+  function afterLoad() {
+    if (!loaded) {
+      loaded = true;
+      const wide = matchMedia("(min-width: 761px)").matches;
+      if (wide && !state.selected) {
+        const first = sorted(filtered())[0];
+        if (first) select(first.id, { focus: false });
+      }
+    }
+    renderAll();
+  }
+
+  async function boot() {
+    renderAll();
+    if (!window.claude || typeof window.claude.use !== "function") return startLocal();
+    try {
+      const [db, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]);
+      const owner = user ? await user.isOwner() : false;
+      if (db && owner) return startCloud(db);
+      startLocal("Saved on this device");
+    } catch { startLocal(); }
+  }
+
+  /* ---------------- Derived data ---------------- */
+  const tagsOf = (n) => { const s = new Set(); for (const m of n.body.matchAll(TAG_RE)) s.add(m[2].toLowerCase()); return s; };
+  function filtered() {
+    const q = state.query.trim().toLowerCase();
+    return [...state.notes.values()].filter(n => {
+      if (state.tag && !tagsOf(n).has(state.tag)) return false;
+      if (!q) return true;
+      return n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q);
+    });
+  }
+  const sorted = (arr) => arr.sort((a, b) => (b.pinned - a.pinned) || (b.updated - a.updated));
+
+  function plain(md) {
+    return md.replace(TASK_RE, "$1").replace(/```[\s\S]*?```/g, " ").replace(/[#>*_`~\[\]()!-]+/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function snippet(n) {
+    const lines = n.body.split("\n").map(l => l.trim()).filter(Boolean);
+    return plain(lines.join(" ")).slice(0, 180);
+  }
+  function rel(ts) {
+    const d = (Date.now() - ts) / 1000;
+    if (d < 45) return "just now";
+    if (d < 3600) return Math.round(d / 60) + " min ago";
+    if (d < 86400) return Math.round(d / 3600) + " h ago";
+    if (d < 172800) return "yesterday";
+    const dt = new Date(ts), now = new Date();
+    return dt.toLocaleDateString(undefined, dt.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  /* ---------------- Rendering ---------------- */
+  function appendHighlighted(el, text, q) {
+    if (!q) { el.append(text); return; }
+    const lower = text.toLowerCase(); let i = 0, at;
+    while ((at = lower.indexOf(q, i)) !== -1) {
+      el.append(text.slice(i, at));
+      const m = document.createElement("mark"); m.textContent = text.slice(at, at + q.length); el.append(m);
+      i = at + q.length;
+    }
+    el.append(text.slice(i));
+  }
+
+  function renderList() {
+    const list = $("list"); list.replaceChildren();
+    const q = state.query.trim().toLowerCase();
+    const items = sorted(filtered());
+    const total = state.notes.size;
+    $("count").textContent = `№ ${total} ${total === 1 ? "note" : "notes"}`;
+
+    if (state.mode === "boot") {
+      const e = document.createElement("div"); e.className = "list-empty"; e.textContent = "Opening your notebook…"; list.append(e); return;
+    }
+    if (!items.length) {
+      const e = document.createElement("div"); e.className = "list-empty";
+      const s = document.createElement("strong");
+      const p = document.createElement("span");
+      const b = document.createElement("button"); b.className = "link-btn"; b.type = "button";
+      if (total === 0) { s.textContent = "No notes yet"; p.textContent = "Your first note is one click away. Everything saves as you type."; b.textContent = "Start a note"; b.onclick = () => createNote(); }
+      else { s.textContent = "Nothing matches"; p.textContent = q ? `No note contains “${state.query.trim()}”${state.tag ? " with #" + state.tag : ""}.` : `No notes tagged #${state.tag}.`; b.textContent = "Clear filters"; b.onclick = clearFilters; }
+      e.append(s, p, b); list.append(e); return;
+    }
+
+    const pinned = items.filter(n => n.pinned), rest = items.filter(n => !n.pinned);
+    const group = (label, arr) => {
+      if (!arr.length) return;
+      if (pinned.length) { const l = document.createElement("div"); l.className = "list-label"; l.textContent = label; list.append(l); }
+      for (const n of arr) list.append(cardFor(n, q));
+    };
+    group("Pinned", pinned); group("Notes", rest);
+  }
+
+  function cardFor(n, q) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "card"; b.setAttribute("role", "listitem");
+    b.dataset.id = n.id;
+    if (n.id === state.selected) b.setAttribute("aria-current", "true");
+    const dot = document.createElement("span"); dot.className = "dot";
+    if (n.color) dot.style.background = `var(--c-${n.color})`;
+    const t = document.createElement("span"); t.className = "t";
+    const wrap = document.createElement("span"); wrap.className = "hl-wrap";
+    if (n.title.trim()) appendHighlighted(wrap, n.title, q); else { t.classList.add("untitled"); wrap.textContent = "Untitled"; }
+    t.append(wrap);
+    const s = document.createElement("span"); s.className = "s";
+    const snip = snippet(n);
+    appendHighlighted(s, snip || "Empty note", q);
+    const m = document.createElement("span"); m.className = "m";
+    if (n.pinned) m.insertAdjacentHTML("beforeend", '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 4h6v6.8l2.6 3.2a1 1 0 0 1-.8 1.6H13v5l-1 1-1-1v-5H7.2a1 1 0 0 1-.8-1.6L9 10.8z"/></svg>');
+    const time = document.createElement("span"); time.textContent = rel(n.updated); m.append(time);
+    const tags = [...tagsOf(n)].slice(0, 3);
+    if (tags.length) { const tg = document.createElement("span"); tg.textContent = tags.map(x => "#" + x).join(" "); m.append(tg); }
+    b.append(dot, t, s, m);
+    b.addEventListener("click", () => select(n.id));
+    return b;
+  }
+
+  function renderTags() {
+    const box = $("tags"); box.replaceChildren();
+    const counts = new Map();
+    for (const n of state.notes.values()) for (const t of tagsOf(n)) counts.set(t, (counts.get(t) || 0) + 1);
+    if (state.tag && !counts.has(state.tag)) state.tag = null;
+    if (!counts.size) { box.hidden = true; return; }
+    box.hidden = false;
+    const chip = (label, val, n) => {
+      const c = document.createElement("button"); c.type = "button"; c.className = "tag-chip";
+      c.setAttribute("aria-pressed", String(state.tag === val));
+      c.append(label);
+      if (n != null) { const k = document.createElement("span"); k.className = "n"; k.textContent = n; c.append(k); }
+      c.onclick = () => { state.tag = state.tag === val || val === null ? null : val; renderAll(); };
+      return c;
+    };
+    box.append(chip("All", null, null));
+    [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 14)
+      .forEach(([t, n]) => box.append(chip("#" + t, t, n)));
+  }
+
+  function renderEditorChrome() {
+    const n = state.notes.get(state.selected);
+    const has = !!n;
+    $("toolbar").hidden = !has; $("scroll").hidden = !has; $("statusbar").hidden = !has; $("blank").hidden = has;
+    if (!has) {
+      if (state.mode === "boot") { $("blankTitle").textContent = "Opening your notebook…"; $("blankText").textContent = "Your notes will appear in the drawer."; }
+      else if (!state.notes.size) { $("blankTitle").textContent = "A clean sheet"; $("blankText").textContent = "Start your first note with the New button. Folio saves every keystroke, so there's nothing to remember."; }
+      else { $("blankTitle").textContent = "Pick a note"; $("blankText").textContent = "Choose a card from the drawer, or start something new."; }
+      return;
+    }
+    $("pinBtn").setAttribute("aria-pressed", String(n.pinned));
+    $("pinBtn").setAttribute("aria-label", n.pinned ? "Unpin note" : "Pin note");
+    const dot = $("colorDot");
+    dot.style.background = n.color ? `var(--c-${n.color})` : "transparent";
+    dot.style.borderColor = n.color ? `var(--c-${n.color})` : "var(--ink-3)";
+    $("modeWrite").setAttribute("aria-pressed", String(!state.reading));
+    $("modeRead").setAttribute("aria-pressed", String(state.reading));
+    $("titleInput").hidden = false;
+    $("bodyInput").hidden = state.reading;
+    $("preview").hidden = !state.reading;
+    $("titleInput").readOnly = state.reading;
+    renderStats(n);
+  }
+
+  function renderStats(n) {
+    const words = (n.body.match(/[\p{L}\p{N}'’-]+/gu) || []).length + (n.title.match(/[\p{L}\p{N}'’-]+/gu) || []).length;
+    $("stWords").textContent = `${words.toLocaleString()} ${words === 1 ? "word" : "words"}`;
+    const mins = Math.round(words / 230);
+    $("stRead").textContent = mins < 1 ? "under 1 min read" : `${mins} min read`;
+    const tasks = [...n.body.matchAll(TASK_RE)];
+    $("stTasks").textContent = tasks.length ? `${tasks.filter(m => m[2] !== " ").length}/${tasks.length} done` : "";
+    const created = new Date(n.created).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    $("metaLine").replaceChildren(
+      Object.assign(document.createElement("span"), { textContent: "Created " + created }),
+      Object.assign(document.createElement("span"), { textContent: "Edited " + rel(n.updated) }),
+    );
+  }
+
+  function renderPreview() {
+    const n = state.notes.get(state.selected); if (!n) return;
+    const pv = $("preview");
+    let html;
+    const src = n.body.replace(TAG_RE, (m, pre, tag) => `${pre}<span class="htag">#${tag}</span>`);
+    if (window.marked && window.DOMPurify) {
+      html = DOMPurify.sanitize(marked.parse(src, { gfm: true, breaks: true }));
+    } else {
+      const esc = n.body.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      html = "<p>" + esc.replace(/\n/g, "<br>") + "</p>";
+    }
+    pv.innerHTML = html.trim() ? html : '<p style="color:var(--ink-3);font-style:italic">Nothing written yet. Switch to Write to start.</p>';
+    pv.querySelectorAll('input[type="checkbox"]').forEach((cb, i) => { cb.disabled = false; cb.dataset.i = i; cb.setAttribute("aria-label", "Toggle task"); });
+    pv.querySelectorAll("a[href]").forEach(a => { a.target = "_blank"; a.rel = "noopener noreferrer"; });
+  }
+
+  function syncEditorFromNote(fromRemote) {
+    const n = state.notes.get(state.selected); if (!n) return;
+    const ti = $("titleInput"), bi = $("bodyInput");
+    if (fromRemote && (document.activeElement === ti || document.activeElement === bi)) return;
+    if (ti.value !== n.title) ti.value = n.title;
+    if (bi.value !== n.body) bi.value = n.body;
+    autosize();
+    if (state.reading) renderPreview();
+  }
+
+  let listFrame = 0;
+  function scheduleListRender() {
+    if (listFrame) return;
+    listFrame = requestAnimationFrame(() => { listFrame = 0; renderList(); renderTags(); });
+  }
+
+  function renderAll() { renderList(); renderTags(); renderEditorChrome(); }
+
+  function autosize() { const bi = $("bodyInput"); bi.style.height = "auto"; bi.style.height = Math.max(bi.scrollHeight, 200) + "px"; }
+
+  function setSync(kind, text) { $("sync").dataset.state = kind; $("syncText").textContent = text; }
+  function setSave(s) {
+    saveState = s;
+    $("stSave").textContent = s === "saving" ? "Saving…" : s === "saved" ? (state.mode === "cloud" ? "Saved · synced" : "Saved on this device") : s === "error" ? "Not saved" : "";
+  }
+
+  /* ---------------- Actions ---------------- */
+  function pruneIfEmpty(id) {
+    const n = state.notes.get(id);
+    if (n && !n.title.trim() && !n.body.trim()) {
+      state.notes.delete(id); clearTimeout(dirty.get(id)); dirty.delete(id);
+      removeStored(id);
+    }
+  }
+
+  function select(id, { focus = true } = {}) {
+    if (state.selected && state.selected !== id) { if (dirty.has(state.selected)) flush(state.selected); pruneIfEmpty(state.selected); }
+    state.selected = id;
+    closeSwatches();
+    $("app").dataset.view = id ? "editor" : "list";
+    syncEditorFromNote(false);
+    if (id) {
+      const n = state.notes.get(id);
+      $("titleInput").value = n.title; $("bodyInput").value = n.body;
+      if (state.reading) renderPreview();
+      $("scroll").scrollTop = 0;
+    }
+    renderAll();
+    requestAnimationFrame(autosize);
+    if (id && focus && !state.reading && matchMedia("(min-width: 761px)").matches) {
+      const n = state.notes.get(id);
+      (n && !n.title ? $("titleInput") : $("bodyInput")).focus({ preventScroll: true });
+    }
+  }
+
+  function createNote() {
+    if (state.mode === "boot") return;
+    const now = Date.now();
+    const body = state.tag ? `\n\n#${state.tag}` : "";
+    const n = { id: newId(), title: "", body, pinned: false, color: "", created: now, updated: now };
+    state.notes.set(n.id, n);
+    state.reading = false;
+    state.query = ""; $("search").value = "";
+    select(n.id, { focus: false });
+    $("titleInput").focus();
+  }
+
+  function edit(fields) {
+    const n = state.notes.get(state.selected); if (!n) return;
+    Object.assign(n, fields, { updated: Date.now() });
+    markDirty(n.id);
+    renderStats(n);
+    scheduleListRender();
+  }
+
+  let undoTimer = 0, undoFn = null;
+  function showToast(msg, undo) {
+    const t = $("toast"); $("toastMsg").textContent = msg;
+    undoFn = undo || null; $("toastBtn").hidden = !undo;
+    t.hidden = false;
+    clearTimeout(undoTimer); undoTimer = setTimeout(() => { t.hidden = true; undoFn = null; }, undo ? 6000 : 4000);
+  }
+  $("toastBtn").onclick = () => { const f = undoFn; undoFn = null; $("toast").hidden = true; if (f) f(); };
+
+  function deleteNote() {
+    const n = state.notes.get(state.selected); if (!n) return;
+    const copy = { ...n };
+    clearTimeout(dirty.get(n.id)); dirty.delete(n.id);
+    state.notes.delete(n.id);
+    removeStored(n.id);
+    const next = matchMedia("(min-width: 761px)").matches ? sorted(filtered())[0] : null;
+    state.selected = null;
+    select(next ? next.id : null, { focus: false });
+    showToast(`Deleted “${copy.title.trim() || "Untitled"}”`, () => {
+      state.notes.set(copy.id, copy);
+      markDirty(copy.id);
+      select(copy.id, { focus: false });
+    });
+  }
+
+  function clearFilters() { state.query = ""; state.tag = null; $("search").value = ""; renderAll(); }
+
+  function toggleReading(v) {
+    state.reading = typeof v === "boolean" ? v : !state.reading;
+    if (state.reading) renderPreview();
+    renderEditorChrome();
+    if (!state.reading) { autosize(); $("bodyInput").focus({ preventScroll: true }); }
+  }
+
+  /* ---------------- Swatches ---------------- */
+  const sw = $("swatches");
+  COLORS.forEach(c => {
+    const b = document.createElement("button"); b.type = "button"; b.dataset.c = c;
+    b.style.setProperty("--sw", c ? `var(--c-${c})` : "transparent");
+    b.setAttribute("aria-label", COLOR_NAMES[c]); b.title = COLOR_NAMES[c];
+    b.onclick = () => { edit({ color: c }); closeSwatches(); renderEditorChrome(); };
+    sw.append(b);
+  });
+  function openSwatches() {
+    const n = state.notes.get(state.selected); if (!n) return;
+    sw.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.c === n.color)));
+    sw.hidden = false; $("colorBtn").setAttribute("aria-expanded", "true");
+  }
+  function closeSwatches() { sw.hidden = true; $("colorBtn").setAttribute("aria-expanded", "false"); }
+  $("colorBtn").onclick = (e) => { e.stopPropagation(); sw.hidden ? openSwatches() : closeSwatches(); };
+  document.addEventListener("click", (e) => { if (!sw.hidden && !sw.contains(e.target)) closeSwatches(); });
+
+  /* ---------------- Events ---------------- */
+  $("newBtn").onclick = createNote;
+  $("backBtn").onclick = () => select(null);
+  $("modeWrite").onclick = () => toggleReading(false);
+  $("modeRead").onclick = () => toggleReading(true);
+  $("pinBtn").onclick = () => { const n = state.notes.get(state.selected); if (n) { edit({ pinned: !n.pinned }); renderEditorChrome(); } };
+  $("delBtn").onclick = deleteNote;
+  $("copyBtn").onclick = async () => {
+    const n = state.notes.get(state.selected); if (!n) return;
+    const text = (n.title ? `# ${n.title}\n\n` : "") + n.body;
+    try { await navigator.clipboard.writeText(text); showToast("Copied as Markdown"); }
+    catch { toggleReading(false); $("bodyInput").select(); showToast("Text selected. Press " + (isMac ? "⌘C" : "Ctrl+C") + " to copy."); }
+  };
+
+  $("titleInput").addEventListener("input", (e) => edit({ title: e.target.value }));
+  $("titleInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); toggleReading(false); $("bodyInput").focus(); } });
+  $("bodyInput").addEventListener("input", (e) => { edit({ body: e.target.value }); autosize(); });
+  $("bodyInput").addEventListener("keydown", (e) => {
+    // Continue lists and checkboxes on Enter
+    if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey || e.isComposing) return;
+    const ta = e.target, pos = ta.selectionStart;
+    if (pos !== ta.selectionEnd) return;
+    const lineStart = ta.value.lastIndexOf("\n", pos - 1) + 1;
+    const line = ta.value.slice(lineStart, pos);
+    const m = line.match(/^(\s*)([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/);
+    if (!m) return;
+    e.preventDefault();
+    if (line.trim() === m[0].trim()) { // empty item: end the list
+      ta.setRangeText("", lineStart, pos, "end");
+    } else {
+      let bullet = m[2];
+      if (/^\d+/.test(bullet)) bullet = (parseInt(bullet, 10) + 1) + bullet.slice(-1);
+      ta.setRangeText("\n" + m[1] + bullet + " " + (m[3] ? "[ ] " : ""), pos, pos, "end");
+    }
+    edit({ body: ta.value }); autosize();
+  });
+
+  $("preview").addEventListener("change", (e) => {
+    const cb = e.target; if (!cb.matches('input[type="checkbox"]')) return;
+    const n = state.notes.get(state.selected); if (!n) return;
+    const want = Number(cb.dataset.i); let i = 0;
+    const body = n.body.replace(TASK_RE, (all, pre, mark) => (i++ === want ? `${pre}[${cb.checked ? "x" : " "}]` : all));
+    $("bodyInput").value = body;
+    edit({ body });
+  });
+
+  $("search").addEventListener("input", (e) => { state.query = e.target.value; renderList(); });
+  $("search").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { clearFilters(); e.target.blur(); }
+    if (e.key === "Enter") { const first = sorted(filtered())[0]; if (first) select(first.id); }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    const mod = isMac ? e.metaKey : e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); if ($("app").dataset.view === "editor" && !matchMedia("(min-width: 761px)").matches) select(null); $("search").focus(); $("search").select(); }
+    else if (mod && e.key.toLowerCase() === "e") { if (state.selected) { e.preventDefault(); toggleReading(); } }
+    else if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); flushAll(); }
+    else if (e.altKey && e.code === "KeyN") { e.preventDefault(); createNote(); }
+    else if (e.key === "Escape" && !sw.hidden) closeSwatches();
+  });
+
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAll(); });
+  window.addEventListener("pagehide", flushAll);
+  window.addEventListener("resize", () => requestAnimationFrame(autosize));
+  setInterval(() => { if (document.visibilityState === "visible") { renderList(); const n = state.notes.get(state.selected); if (n) renderStats(n); } }, 60000);
+
+  boot();
+})();
+</script>
+</body>
+</html>
