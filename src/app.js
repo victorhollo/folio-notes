@@ -121,6 +121,8 @@ const TAG_RE = /(^|[\s(])#([\p{L}\p{N}_-]{1,32})/gu;
 const WORD_RE = /[\p{L}\p{N}'’-]+/gu;
 const LS_NOTES = "folio.notes.v1";
 const TRASH_DAYS = 30;
+// The GitHub Pages build fills this in from firebase.config.json (see build.mjs). null means no Firebase.
+const FB_CONFIG = /*FIREBASE_CONFIG*/null;
 
 const B = (t, h = "", extra = {}) => { const b = { id: uid("b"), t, h, i: 0, ...extra }; if (t === "todo" && b.c == null) b.c = false; return b; };
 const dailyBlocks = () => [B("h3", "Top three"), B("todo"), B("todo"), B("todo"), B("h3", "Notes"), B("p"), B("h3", "Wins today"), B("ul")];
@@ -461,12 +463,15 @@ async function flush(id) {
   dirty.delete(id);
   inflight.add(id);
   try {
-    await sp.col.doc(id).set(serialize(n));
+    await sp.col.doc(id).set(sp.data ? sp.data(n) : serialize(n));
     n._synced = true;
     if (!dirty.size && !again.size) setSave("saved");
   } catch (e) {
     const code = e && e.code;
-    if (code === "invalid_argument" && n.space === "shared") {
+    if (code === "permission-denied" && n.space === "shared") {
+      setSave("error");
+      toast("You can view this note, but you don't have edit access.");
+    } else if (code === "invalid_argument" && n.space === "shared") {
       canWriteShared = false; setSave("error");
       toast("You can read shared notes, but your access to this page doesn't include editing them.");
       if (E.note === n) openEditor();
@@ -489,18 +494,23 @@ async function removeStored(n) {
   if (sp.local) { saveLocalNow(); return; }
   try { await sp.col.doc(n.id).delete(); } catch { toast("Couldn't delete that note. Try again."); }
 }
-async function moveSpace(n, target) {
+async function moveSpace(n, target, opts = {}) {
   if (!n || n.space === target || !SP[target]) return;
   if (target === "shared" && !canWriteShared) { toast("Your access to this page doesn't allow adding shared notes."); return; }
   const from = n.space, src = SP[from], dst = SP[target];
+  if (FB.user && from === "shared" && !fbIsOwner(n)) return;
+  const acl = n.acl;
+  if (FB.user && target === "shared") n.acl = fbNewAcl();
   clearTimeout(dirty.get(n.id)); dirty.delete(n.id);
   n._moving = true; n.space = target;
   try {
-    if (dst.local) saveLocalNow(); else await dst.col.doc(n.id).set(serialize(n));
+    if (dst.local) saveLocalNow(); else await dst.col.doc(n.id).set(dst.data ? dst.data(n) : serialize(n));
     if (src.local) saveLocalNow(); else await src.col.doc(n.id).delete();
-    toast(target === "shared" ? "Shared. Everyone you give access to this page can open and edit it." : "Private again. Only you can see it.");
+    if (FB.user && target === "private") n.acl = null;
+    if (!opts.quiet) toast(target === "shared" ? "Shared. Everyone you give access to this page can open and edit it." : "Private again. Only you can see it.");
+    return true;
   } catch {
-    n.space = from;
+    n.space = from; n.acl = acl;
     toast("Couldn't move that note. Try again.");
   } finally {
     n._moving = false;
@@ -539,15 +549,16 @@ function welcomeNotes() {
 
 function purgeOldTrash() {
   const cutoff = Date.now() - TRASH_DAYS * 864e5;
-  for (const n of [...S.notes.values()]) if (n.trashed && n.trashed < cutoff && (n.space === "private" || isOwner)) { S.notes.delete(n.id); removeStored(n); }
+  for (const n of [...S.notes.values()]) if (n.trashed && n.trashed < cutoff && (n.space === "private" || isOwner) && fbMayDelete(n)) { S.notes.delete(n.id); removeStored(n); }
 }
 function loadLocalNotes(seedIfEmpty) {
   const stored = loadLocal();
   if (Array.isArray(stored)) {
     for (const d of stored) if (d && typeof d.id === "string") { const n = normalize(d.id, d, "private"); n._synced = true; S.notes.set(n.id, n); }
   } else if (seedIfEmpty) {
-    for (const n of welcomeNotes()) { n._synced = true; S.notes.set(n.id, n); }
-    saveLocalNow();
+    const seeded = {};
+    for (const n of welcomeNotes()) { n._synced = true; S.notes.set(n.id, n); seeded[n.id] = n.updated; }
+    saveLocalNow(); prefs.set("seeded", seeded);
   }
   window.addEventListener("storage", (e) => {
     if (e.key !== LS_NOTES || !e.newValue || !SP.private?.local) return;
@@ -570,26 +581,31 @@ async function startCloud(db, user, owner) {
   SP.shared = { col: db.collection("shared") };
   canWriteShared = (user ? await user.can("data.write") : null) !== false;
   setSync("cloud", "Synced");
+  if (SP.private.local) loadLocalNotes(false);
+  subscribeSpaces(afterLoad);
+  startRoom(user);
+}
+function subscribeSpaces(ready) {
   const subs = [["private", SP.private.col], ["shared", SP.shared.col]].filter(([, c]) => c);
   let waiting = subs.length;
-  if (SP.private.local) loadLocalNotes(false);
   for (const [space, c] of subs) {
     let first = true;
     c.onSnapshot((snap) => {
       applyIncoming(snap.docs.map((d) => [d.id, d.data() || {}]), space);
-      if (first) { first = false; if (--waiting === 0) afterLoad(); }
+      if (first) { first = false; if (--waiting === 0) ready(); }
     }, () => setSync("error", "Sync paused, reload"));
   }
-  startRoom(user);
 }
 function applyIncoming(entries, space) {
-  const seen = new Set(); let openChanged = false;
+  const seen = new Set(); let openChanged = false, aclChanged = false;
   for (const [id, data] of entries) {
     seen.add(id);
     const cur = S.notes.get(id);
     if (cur && cur._moving) continue;
     const inc = normalize(id, data, space);
-    if (!cur) { inc._synced = true; S.notes.set(id, inc); if (id === S.selected) openChanged = true; continue; }
+    const acl = space === "shared" ? aclOf(data) : null;
+    if (!cur) { inc._synced = true; inc.acl = acl; S.notes.set(id, inc); if (id === S.selected) openChanged = true; continue; }
+    if (JSON.stringify(cur.acl || null) !== JSON.stringify(acl)) { cur.acl = acl; if (id === S.selected) aclChanged = true; }
     cur.space = space;
     const r = mergeNote(cur, inc);
     cur._synced = true;
@@ -600,6 +616,7 @@ function applyIncoming(entries, space) {
     if (n.space === space && n._synced && !seen.has(n.id) && !dirty.has(n.id) && !inflight.has(n.id) && !n._moving) S.notes.delete(n.id);
   }
   if (S.selected && !S.notes.has(S.selected)) { S.selected = null; openEditor(); applyLayout(); }
+  else if (aclChanged && E.note) { openEditor(); if (modal && modal.dataset.share === E.note.id) openShare(E.note); }
   else if (openChanged && E.note) patchEditor();
   if (loaded) renderSide();
 }
@@ -705,6 +722,7 @@ function renderList() {
     if (q.length) box.append(el("strong", { text: "Nothing matches" }), el("span", { text: `No note in ${viewName()} contains “${S.query.trim()}”.` }), el("button", { class: "link-btn", type: "button", text: "Clear search", onclick: clearSearch }));
     else if (S.view === "trash") box.append(el("strong", { text: "Trash is empty" }), el("span", { text: "Deleted notes wait here for 30 days, so you can bring them back." }));
     else if (S.view === "shared") box.append(el("strong", { text: "Nothing shared yet" }), el("span", { text: "Notes here can be opened and edited by everyone you give access to this page. Start one with New note, or move a note here with the Share button above it." }), canWriteShared ? el("button", { class: "link-btn", type: "button", text: "Start a shared note", onclick: () => newNote() }) : null);
+    if (S.view === "shared" && FB.user) box.querySelector("span").textContent = "Notes you share, and notes people share with you, show up here. Start one with New note, or share a note with the Share button above it.";
     else if (S.view === "pinned") box.append(el("strong", { text: "Nothing pinned" }), el("span", { text: "Pin a note with the pin button above it to keep it close." }));
     else if (S.view === "tag") box.append(el("strong", { text: "No notes with this tag" }));
     else box.append(el("strong", { text: "No notes yet" }), el("span", { text: "Start one with New note. Folio saves every keystroke." }), el("button", { class: "link-btn", type: "button", text: "Start a note", onclick: () => newNote() }));
@@ -892,7 +910,8 @@ function newNote(tplId = "blank", opts = {}) {
   const n = normalize(uid(), {
     title: opts.title != null ? opts.title : tpl.title ? tpl.title() : "",
     blocks: tpl.blocks(), tags: S.view === "tag" && !opts.silent ? [S.tag] : [], created: now, updated: now,
-  }, opts.space || (S.view === "shared" && SP.shared && canWriteShared ? "shared" : E.note && opts.silent ? E.note.space : "private"));
+  }, opts.space || (S.view === "shared" && SP.shared && canWriteShared ? "shared" : E.note && opts.silent && (FB.user ? fbIsOwner(E.note) : canEdit(E.note)) ? E.note.space : "private"));
+  if (n.space === "shared" && FB.user) n.acl = opts.silent && E.note && E.note.acl ? { ...E.note.acl } : fbNewAcl();
   S.notes.set(n.id, n);
   markDirty(n.id);
   if (opts.silent) return n;
@@ -947,7 +966,7 @@ function purgeNote(id) {
   toast("Deleted forever");
 }
 function emptyTrash() {
-  for (const n of [...S.notes.values()]) if (n.trashed && (n.space === "private" || canWriteShared)) { S.notes.delete(n.id); removeStored(n); }
+  for (const n of [...S.notes.values()]) if (n.trashed && (n.space === "private" || canWriteShared) && fbMayDelete(n)) { S.notes.delete(n.id); removeStored(n); }
   selectNote(null); toast("Trash emptied");
 }
 function duplicateNote(id) {
@@ -972,7 +991,7 @@ function confirmButton(label, confirmLabel, run, cls = "ghost danger") {
    Editor
    ===================================================================== */
 const E = { root: $("blocks"), note: null, focusId: null, sel: new Set(), anchor: null, head: null, menu: null, hist: { past: [], future: [], kind: null, t: 0, bid: null }, drag: null, dragSel: null };
-const readOnly = () => !E.note || !!E.note.trashed || (E.note.space === "shared" && !canWriteShared);
+const readOnly = () => !E.note || !!E.note.trashed || !canEdit(E.note);
 const bIndex = (id) => E.note.blocks.findIndex((b) => b.id === id);
 const bGet = (id) => E.note && E.note.blocks.find((b) => b.id === id);
 const blkEl = (id) => E.root.querySelector(`.blk[data-id="${id}"]`);
@@ -989,7 +1008,7 @@ function openEditor() {
   renderSheet();
   if (!n) return;
   const ti = $("titleInput");
-  ti.value = n.title; ti.readOnly = !!n.trashed; autosizeTitle(); requestAnimationFrame(autosizeTitle);
+  ti.value = n.title; ti.readOnly = readOnly(); autosizeTitle(); requestAnimationFrame(autosizeTitle);
   $("trashBanner").hidden = !n.trashed;
   renderBlocks();
   refreshMeta();
@@ -1042,14 +1061,14 @@ function refreshMeta() {
   $("crumbNote").textContent = n.title.trim() || "Untitled";
   $("statWords").textContent = `${d.words.toLocaleString()} ${d.words === 1 ? "word" : "words"}`;
   const sb = $("shareBtn");
-  sb.hidden = !SP.shared;
-  if (SP.shared) {
+  sb.hidden = !SP.shared && !FB.ready;
+  if (SP.shared || FB.ready) {
     const shared = n.space === "shared";
     sb.dataset.space = n.space;
     sb.replaceChildren(el("span", { html: shared ? I.people : I.lock, style: "display:contents" }), el("span", { class: "lab", text: shared ? "Shared" : "Private" }));
-    sb.title = shared ? "Everyone with access to this page can open and edit this note" : "Only you can see this note";
+    sb.title = FB.ready ? (shared ? fbShareSummary(n) : "Only you can see this note. Click to share it.") : shared ? "Everyone with access to this page can open and edit this note" : "Only you can see this note";
   }
-  if (n.space === "shared" && !canWriteShared && !n.trashed) $("statSave").textContent = "View only";
+  if (n.space === "shared" && !canEdit(n) && !n.trashed) $("statSave").textContent = "View only";
   $("pinBtn").setAttribute("aria-pressed", String(n.pinned));
   $("pinBtn").setAttribute("aria-label", n.pinned ? "Unpin note" : "Pin note");
   const dot = $("colorDot");
@@ -2000,6 +2019,226 @@ $("titleInput").addEventListener("keydown", (e) => {
 });
 
 /* =====================================================================
+   Firebase (GitHub Pages): Google sign-in, sync, and sharing by email or link
+   ===================================================================== */
+// Private notes live at users/{uid}/notes/{id}. Shared notes live at shared/{id} with
+//   owner, ownerEmail, members (everyone who can open it), editors (who can change it), link (off | view | edit).
+// firestore.rules enforces who may read and change what.
+const FB_SDK = "https://www.gstatic.com/firebasejs/10.12.2/";
+const FB = { ready: false, a: null, f: null, auth: null, db: null, user: null, email: "" };
+const ACL_KEYS = ["owner", "ownerEmail", "members", "editors", "link"];
+const cleanEmail = (s) => String(s || "").trim().toLowerCase();
+const isEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+function aclOf(d) {
+  if (!d || typeof d.owner !== "string") return null;
+  const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
+  return { owner: d.owner, ownerEmail: String(d.ownerEmail || ""), members: list(d.members), editors: list(d.editors), link: ["view", "edit"].includes(d.link) ? d.link : "off" };
+}
+function fbNewAcl() { return { owner: FB.user.uid, ownerEmail: FB.email, members: [FB.email], editors: [FB.email], link: "off" }; }
+const fbIsOwner = (n) => !!(FB.user && n && n.acl && n.acl.owner === FB.user.uid);
+function fbMayDelete(n) { return !FB.user || n.space !== "shared" || fbIsOwner(n); }
+function canEdit(n) {
+  if (!n || n.space !== "shared") return true;
+  if (FB.user) return !!n.acl && (fbIsOwner(n) || n.acl.editors.includes(FB.email));
+  return canWriteShared;
+}
+function fbShareSummary(n) {
+  const others = n.acl ? n.acl.members.filter((m) => m !== FB.email).length : 0;
+  const link = n.acl && n.acl.link !== "off" ? " and anyone with the link" : "";
+  return fbIsOwner(n) ? `Shared with ${others} ${others === 1 ? "person" : "people"}${link}` : `Shared with you by ${n.acl ? n.acl.ownerEmail : "someone"}`;
+}
+// Only the owner writes the access fields, so an editor's save never undoes a change to who has access.
+function fbData(n) {
+  const data = serialize(n);
+  if (fbIsOwner(n)) for (const k of ACL_KEYS) data[k] = n.acl[k];
+  return data;
+}
+function fbCol(ref, q, merge) {
+  const f = FB.f;
+  return {
+    doc: (id) => ({
+      set: (data) => (merge ? f.setDoc(f.doc(ref, id), data, { merge: true }) : f.setDoc(f.doc(ref, id), data)),
+      delete: () => f.deleteDoc(f.doc(ref, id)),
+    }),
+    onSnapshot: (cb, err) => f.onSnapshot(q || ref, (snap) => cb({ docs: snap.docs.map((d) => ({ id: d.id, data: () => d.data() })) }), err),
+  };
+}
+const sharedRef = (id) => FB.f.doc(FB.db, "shared", id);
+async function startFirebase() {
+  setSync("boot", "Connecting…");
+  try {
+    const [app, a, f] = await Promise.all(["app", "auth", "firestore"].map((m) => import(`${FB_SDK}firebase-${m}.js`)));
+    const fa = app.initializeApp(FB_CONFIG);
+    Object.assign(FB, { a, f, auth: a.getAuth(fa), db: f.getFirestore(fa), ready: true });
+  } catch {
+    startLocal();
+    setSync("local", "In this browser (sign-in unavailable)");
+    return;
+  }
+  let first = true;
+  FB.a.onAuthStateChanged(FB.auth, (user) => {
+    if (!first) { if (!!user !== !!FB.user) location.reload(); return; }
+    first = false;
+    if (!user) {
+      startLocal(); refreshMetaIfOpen();
+      if (/^#note=/.test(location.hash)) openModal(el("div", { class: "modal share-modal" },
+        el("div", { class: "modal-head" }, el("h3", { text: "Open a shared note" }), el("button", { class: "icon-btn", type: "button", "aria-label": "Close", html: I.x, onclick: closeModal })),
+        el("div", { class: "share" }, el("p", { class: "share-note", text: "Someone shared a Folio note with you. Sign in with Google to open it." }),
+          el("button", { class: "primary", type: "button", text: "Sign in with Google", onclick: fbSignIn })))).querySelector(".primary").focus();
+      return;
+    }
+    fbStart(user);
+  });
+}
+function fbStart(user) {
+  const f = FB.f;
+  FB.user = user; FB.email = cleanEmail(user.email);
+  S.mode = "cloud"; isOwner = true; canWriteShared = true;
+  const shared = f.collection(FB.db, "shared");
+  SP.private = { col: fbCol(f.collection(FB.db, "users", user.uid, "notes")) };
+  SP.shared = { col: fbCol(shared, f.query(shared, f.where("members", "array-contains", FB.email)), true), data: fbData };
+  setSync("cloud", "Synced");
+  $("sync").title = `Synced as ${user.email}`;
+  subscribeSpaces(() => { fbImportLocal(); afterLoad(); fbOpenFromHash(); });
+}
+// The first time someone signs in on a device, bring along the notes they kept in this browser.
+function fbImportLocal() {
+  const key = "fbImported." + FB.user.uid;
+  if (prefs.get(key, false)) return;
+  const stored = loadLocal();
+  const mine = [...S.notes.values()];
+  const seeded = prefs.get("seeded", {}) || {};   // untouched example notes stay behind
+  const list = Array.isArray(stored) ? stored.filter((d) => d && typeof d.id === "string" && !S.notes.has(d.id) && seeded[d.id] !== d.updated) : [];
+  if (list.length) for (const d of list) { const n = normalize(d.id, d, "private"); S.notes.set(n.id, n); markDirty(n.id); }
+  else if (!mine.length) for (const n of welcomeNotes()) { S.notes.set(n.id, n); markDirty(n.id); }
+  prefs.set(key, true);
+  if (list.length) toast(`Added ${list.length} ${list.length === 1 ? "note" : "notes"} from this browser to your account.`);
+}
+async function fbSignIn() {
+  if (!FB.ready) return;
+  try { await FB.a.signInWithPopup(FB.auth, new FB.a.GoogleAuthProvider()); }
+  catch (e) {
+    const code = e && e.code;
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
+    toast(code === "auth/unauthorized-domain" ? "Sign-in isn't enabled for this address yet. Add it under Authorized domains in Firebase." : "Couldn't sign in. Try again.");
+  }
+}
+async function fbSignOut() { flushAll(); try { await FB.a.signOut(FB.auth); } catch {} }
+function refreshMetaIfOpen() { if (E.note) refreshMeta(); }
+
+// Links look like …/#note=<id>. Opening one adds you to the note, as the link allows.
+function noteLink(n) { return location.origin + location.pathname + "#note=" + encodeURIComponent(n.id); }
+async function fbOpenFromHash() {
+  const m = location.hash.match(/^#note=([\w-]{1,64})$/);
+  if (!m || !FB.user) return;
+  const id = m[1];
+  history.replaceState(null, "", location.pathname + location.search);
+  const have = S.notes.get(id);
+  if (have) { S.view = have.trashed ? "trash" : "all"; selectNote(id); return; }
+  let snap;
+  try { snap = await FB.f.getDoc(sharedRef(id)); } catch { snap = null; }
+  const acl = snap && snap.exists() ? aclOf(snap.data()) : null;
+  if (!acl) { toast("That note isn't shared with you. Ask its owner to invite " + FB.user.email + "."); return; }
+  try {
+    const add = { members: FB.f.arrayUnion(FB.email) };
+    if (acl.link === "edit") add.editors = FB.f.arrayUnion(FB.email);
+    await FB.f.updateDoc(sharedRef(id), add);
+  } catch { toast("Couldn't open that note. Try the link again."); return; }
+  const open = () => { if (S.notes.has(id)) { S.view = "shared"; selectNote(id); return true; } };
+  if (!open()) { let tries = 0; const t = setInterval(() => { if (open() || ++tries > 40) clearInterval(t); }, 150); }
+}
+window.addEventListener("hashchange", () => { if (loaded) fbOpenFromHash(); });
+
+async function fbSetAcl(n, next) {
+  const prev = n.acl;
+  n.acl = { ...n.acl, ...next };
+  n.acl.members = [...new Set([n.acl.ownerEmail, ...n.acl.members])];
+  n.acl.editors = [...new Set([n.acl.ownerEmail, ...n.acl.editors.filter((e) => n.acl.members.includes(e))])];
+  if (modal && modal.dataset.share === n.id) openShare(n);
+  refreshMeta();
+  try { const d = {}; for (const k of ["members", "editors", "link"]) d[k] = n.acl[k]; await FB.f.updateDoc(sharedRef(n.id), d); return true; }
+  catch { n.acl = prev; if (modal && modal.dataset.share === n.id) openShare(n); refreshMeta(); toast("Couldn't change who has access. Try again."); return false; }
+}
+async function fbLeave(n) {
+  try {
+    await FB.f.updateDoc(sharedRef(n.id), { members: FB.f.arrayRemove(FB.email), editors: FB.f.arrayRemove(FB.email) });
+    closeModal(); toast("You left that note.");
+  } catch { toast("Couldn't leave that note. Try again."); }
+}
+async function copyLink(n) {
+  try { await navigator.clipboard.writeText(noteLink(n)); toast("Link copied"); }
+  catch { prompt("Copy this link", noteLink(n)); }
+}
+
+function openShare(n) {
+  const owner = fbIsOwner(n), shared = n.space === "shared" && n.acl;
+  const body = el("div", { class: "share" });
+  const box = el("div", { class: "modal share-modal" },
+    el("div", { class: "modal-head" }, el("h3", { text: `Share “${n.title.trim() || "Untitled"}”` }), el("button", { class: "icon-btn", type: "button", "aria-label": "Close", html: I.x, onclick: closeModal })),
+    body);
+
+  if (!shared) {
+    body.append(
+      el("p", { class: "share-note", text: "Only you can see this note. Share it to invite people by email, or to get a link." }),
+      el("button", { class: "primary", type: "button", text: "Share this note", onclick: async (e) => { e.currentTarget.disabled = true; if (await moveSpace(n, "shared", { quiet: true })) openShare(n); else e.currentTarget.disabled = false; } }));
+    openModal(box).dataset.share = n.id;
+    return;
+  }
+  const acl = n.acl;
+  const roleOf = (m) => (m === acl.ownerEmail ? "owner" : acl.editors.includes(m) ? "edit" : "view");
+
+  if (owner) {
+    const input = el("input", { type: "text", inputmode: "email", placeholder: "Add people by email", autocomplete: "off", "aria-label": "Email address" });
+    const role = el("select", { "aria-label": "Access" }, el("option", { value: "edit", text: "Can edit" }), el("option", { value: "view", text: "Can view" }));
+    const invite = () => {
+      const emails = input.value.split(/[\s,;]+/).map(cleanEmail).filter(Boolean);
+      const bad = emails.filter((x) => !isEmail(x));
+      if (!emails.length) { input.focus(); return; }
+      if (bad.length) { toast(`“${bad[0]}” isn't an email address.`); input.focus(); return; }
+      fbSetAcl(n, { members: [...acl.members, ...emails], editors: role.value === "edit" ? [...acl.editors, ...emails] : acl.editors.filter((x) => !emails.includes(x)) });
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); invite(); } });
+    body.append(el("form", { class: "share-add", onsubmit: (e) => { e.preventDefault(); invite(); } }, input, role, el("button", { class: "primary", type: "submit", text: "Invite" })));
+  }
+
+  const people = el("div", { class: "share-people" });
+  for (const m of [acl.ownerEmail, ...acl.members.filter((x) => x !== acl.ownerEmail)]) {
+    const r = roleOf(m);
+    const who = el("span", { class: "who" }, el("span", { class: "av", text: (m[0] || "?").toUpperCase() }), el("span", { text: m + (m === FB.email ? " (you)" : "") }));
+    let ctl;
+    if (r === "owner") ctl = el("span", { class: "role", text: "Owner" });
+    else if (owner) {
+      ctl = el("select", { "aria-label": `Access for ${m}` }, el("option", { value: "edit", text: "Can edit" }), el("option", { value: "view", text: "Can view" }), el("option", { value: "remove", text: "Remove" }));
+      ctl.value = r;
+      ctl.addEventListener("change", () => {
+        const v = ctl.value;
+        if (v === "remove") fbSetAcl(n, { members: acl.members.filter((x) => x !== m), editors: acl.editors.filter((x) => x !== m) });
+        else fbSetAcl(n, { editors: v === "edit" ? [...acl.editors, m] : acl.editors.filter((x) => x !== m) });
+      });
+    } else ctl = el("span", { class: "role", text: r === "edit" ? "Can edit" : "Can view" });
+    people.append(el("div", { class: "share-row" }, who, ctl));
+  }
+  body.append(el("h5", { text: "People with access" }), people);
+
+  const linkText = { off: "Only people added above can open the link", view: "Anyone signed in with the link can view", edit: "Anyone signed in with the link can edit" };
+  let linkCtl;
+  if (owner) {
+    linkCtl = el("select", { "aria-label": "Link access" }, ...Object.entries(linkText).map(([v, t]) => el("option", { value: v, text: t })));
+    linkCtl.value = acl.link;
+    linkCtl.addEventListener("change", () => fbSetAcl(n, { link: linkCtl.value }));
+  } else linkCtl = el("span", { class: "role", text: linkText[acl.link] });
+  body.append(el("h5", { text: "Link" }), el("div", { class: "share-link" }, el("span", { html: I.link, style: "display:contents" }), linkCtl, el("button", { class: "ghost", type: "button", text: "Copy link", onclick: () => copyLink(n) })));
+
+  const foot = el("div", { class: "share-foot" });
+  if (owner) foot.append(confirmButton("Stop sharing", "Remove everyone?", async () => { if (await moveSpace(n, "private")) closeModal(); }, "ghost danger"));
+  else foot.append(confirmButton("Leave this note", "Leave it?", () => fbLeave(n), "ghost danger"));
+  body.append(foot);
+
+  const sc = openModal(box); sc.dataset.share = n.id;
+  if (owner) box.querySelector(".share-add input").focus(); else box.querySelector(".modal-head button").focus();
+}
+
+/* =====================================================================
    Live collaboration: who's here, where they are, what they're typing
    ===================================================================== */
 const R = { room: null, user: null, peers: [], names: {}, liveTimer: 0, lastLive: 0 };
@@ -2156,7 +2395,10 @@ function toast(msg, undoFn) {
   toastTimer = setTimeout(() => t.remove(), undoFn ? 6500 : 3500);
 }
 function setSync(kind, text) { $("sync").dataset.state = kind; $("syncText").textContent = text; $("sync").title = text; }
-function setSave(s) { $("statSave").textContent = s === "saving" ? "Saving…" : s === "saved" ? "Saved" : s === "error" ? "Not saved" : ""; }
+function setSave(s) {
+  if (E.note && !E.note.trashed && !canEdit(E.note)) { $("statSave").textContent = "View only"; return; }
+  $("statSave").textContent = s === "saving" ? "Saving…" : s === "saved" ? "Saved" : s === "error" ? "Not saved" : "";
+}
 
 /* ---------- modal: palette + shortcuts ---------- */
 let modal = null;
@@ -2337,13 +2579,15 @@ $("app").addEventListener("click", (e) => { if (e.target === $("app")) closeCove
 $("backBtn").addEventListener("click", () => selectNote(null));
 $("themeBtn").addEventListener("click", () => setTheme(S.theme === "system" ? "light" : S.theme === "light" ? "dark" : "system"));
 $("moreBtn").addEventListener("click", (e) => menuPop([
-  { section: S.mode === "cloud" ? "Synced to your claude.ai account" : "Notes live in this browser" },
+  { section: FB.user ? `Synced as ${FB.user.email}` : S.mode === "cloud" ? "Synced to your claude.ai account" : "Notes live in this browser" },
+  FB.ready && !FB.user ? { label: "Sign in with Google", desc: "Sync your notes and share them", icon: I.people, run: fbSignIn } : null,
   { label: "Export a backup (.json)", icon: I.download, run: exportJson },
   { label: "Export as Markdown (.md)", icon: I.download, run: exportMd },
   { label: "Import notes", desc: ".json backup, .md or .txt files", icon: I.upload, run: () => $("importInput").click() },
   "sep",
   { label: "Keyboard shortcuts", icon: I.keyboard, hint: "?", run: openShortcuts },
-], e.currentTarget.getBoundingClientRect()));
+  FB.user ? { label: "Sign out", icon: I.lock, run: fbSignOut } : null,
+].filter(Boolean), e.currentTarget.getBoundingClientRect()));
 $("sortBtn").addEventListener("click", () => { S.sort = S.sort === "updated" ? "created" : S.sort === "created" ? "title" : "updated"; prefs.set("sort", S.sort); renderList(); });
 $("search").addEventListener("input", (e) => { S.query = e.target.value; renderList(); });
 $("search").addEventListener("keydown", (e) => {
@@ -2352,7 +2596,9 @@ $("search").addEventListener("keydown", (e) => {
 });
 $("pinBtn").addEventListener("click", togglePin);
 $("shareBtn").addEventListener("click", (e) => {
-  const n = E.note; if (!n || !SP.shared) return;
+  const n = E.note; if (!n) return;
+  if (FB.ready) { if (FB.user) openShare(n); else fbSignIn(); return; }
+  if (!SP.shared) return;
   menuPop([
     { section: "Who can see this note" },
     { label: "Only me", desc: "Private to your account", icon: I.lock, checked: n.space === "private", run: () => moveSpace(n, "private") },
@@ -2417,7 +2663,7 @@ async function boot() {
   try { document.execCommand("styleWithCSS", false, false); } catch {}
   buildDock(); applyTheme(); renderAll();
   if (document.fonts) document.fonts.ready.then(autosizeTitle);
-  if (!window.claude || typeof window.claude.use !== "function") return startLocal();
+  if (!window.claude || typeof window.claude.use !== "function") return FB_CONFIG ? startFirebase() : startLocal();
   try {
     const [db, user] = await Promise.all([cap("db"), cap("user")]);
     const owner = user ? await user.isOwner() : false;
