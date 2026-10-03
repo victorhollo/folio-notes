@@ -61,6 +61,19 @@ service cloud.firestore {
                     || joiningByLink()
                     || leaving();
       allow delete: if isOwner();
+
+      // Who is in the note right now. Everyone with access can see it; each person writes only their own entry.
+      match /presence/{uid} {
+        function noteMember() {
+          return signedIn() && me() in get(/databases/$(database)/documents/shared/$(noteId)).data.members;
+        }
+        allow read: if noteMember();
+        allow create, update: if noteMember() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['name', 'photo', 'block', 'at'])
+          && request.resource.data.name is string && request.resource.data.name.size() <= 100
+          && request.resource.data.photo is string && request.resource.data.photo.size() <= 500;
+        allow delete: if request.auth != null && request.auth.uid == uid;
+      }
     }
   }
 }

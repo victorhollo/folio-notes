@@ -27,22 +27,22 @@ Edits merge block by block, so two people editing different paragraphs never ove
 
 ## Sharing on GitHub Pages (Firebase)
 
-When the GitHub Pages build has a Firebase config, you can **Sign in with Google** from the ⋯ menu or the Share button. Your notes then sync to your account across devices, and the first sign-in brings along the notes you kept in that browser.
+When the GitHub Pages build has a Firebase config, you can **sign in** with Google or with an emailed sign-in link from the ⋯ menu or the Share button. Your notes then sync to your account across devices, and the first sign-in brings along the notes you kept in that browser.
 
 Press **Share** above any note to:
 
-- **Invite people by email**, as *Can edit* or *Can view*. They see the note under **Shared** after signing in with that Google account.
+- **Invite people by email**, as *Can edit* or *Can view*. They see the note under **Shared** after signing in with that email address.
 - **Share a link.** Choose who the link works for: only the people you added, anyone signed in who has the link (view), or anyone signed in who has the link (edit). Opening the link adds that person to the note.
 - Change someone's access, remove them, or **Stop sharing** to make the note private again. People you shared with can **Leave** a note.
 
-Edits sync within a second and merge block by block, the same as above. Only the owner can change who has access or delete a shared note; `firestore.rules` enforces this on the server.
+Edits sync within a second and merge block by block, the same as above. Avatars at the top of a shared note show who else has it open, and the block they're in is outlined in their color. Signed-in notes keep working offline: edits are saved on the device and sync when you're back online. Only the owner can change who has access or delete a shared note; `firestore.rules` enforces this on the server.
 
 Without a Firebase config, the GitHub Pages version keeps notes in your browser (`localStorage`). They stay on that device, and clearing site data deletes them. Export a backup from the ⋯ menu.
 
 ### Setting up Firebase
 
 1. In the [Firebase console](https://console.firebase.google.com/), open your project and add a **Web app**. Copy its config into `firebase.config.json` at the repo root (see `firebase.config.example.json`). This config identifies the project and is safe to publish; access is controlled by the security rules.
-2. **Authentication → Sign-in method:** enable **Google**. Under **Settings → Authorized domains**, add `victorhollo.github.io`.
+2. **Authentication → Sign-in method:** enable **Google**, and **Email/Password** with **Email link (passwordless sign-in)** turned on. Under **Settings → Authorized domains**, add `victorhollo.github.io`.
 3. **Firestore Database:** create a database, then deploy the rules with `npx firebase-tools deploy --only firestore:rules` (the project is set in `.firebaserc`).
 4. Run `node build.mjs` and commit `index.html`.
 
