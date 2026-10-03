@@ -456,3 +456,4 @@ a.wl.missing { color: var(--ink-3); background: transparent; border: 1px dashed 
   .share-link select, .share-link .role { flex: 1 1 calc(100% - 30px); }
   .share-link .ghost { margin-left: 26px; }
 }
+.share-note.small { font-size: .8rem; color: var(--ink-3); }

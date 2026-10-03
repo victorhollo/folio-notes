@@ -469,6 +469,7 @@ a.wl.missing { color: var(--ink-3); background: transparent; border: 1px dashed 
   .share-link select, .share-link .role { flex: 1 1 calc(100% - 30px); }
   .share-link .ghost { margin-left: 26px; }
 }
+.share-note.small { font-size: .8rem; color: var(--ink-3); }
 </style>
 </head>
 <body>
@@ -1043,6 +1044,16 @@ async function flush(id) {
     if (!ok) toast("This browser refused to save. Export a backup from the ⋯ menu so nothing is lost.");
     return;
   }
+  if (sp.fire) {
+    // Firestore keeps the write on this device and sends it when it can, so there's nothing to wait for.
+    dirty.delete(id);
+    const wasNew = n._aclNew; n._aclNew = false;
+    sp.col.doc(id).set(sp.data ? sp.data(n) : serialize(n))
+      .then(() => { n._synced = true; })
+      .catch((e) => { if (wasNew) n._aclNew = true; setSave("error"); toast(e && e.code === "permission-denied" ? "You can view this note, but you don't have edit access." : "Couldn't save the last change. Keep this tab open and keep typing to try again."); });
+    if (!dirty.size) setSave(navigator.onLine ? "saved" : "offline");
+    return;
+  }
   if (inflight.has(id)) { again.add(id); return; }
   dirty.delete(id);
   inflight.add(id);
@@ -1088,9 +1099,11 @@ async function moveSpace(n, target, opts = {}) {
   clearTimeout(dirty.get(n.id)); dirty.delete(n.id);
   n._moving = true; n.space = target;
   try {
-    if (dst.local) saveLocalNow(); else await dst.col.doc(n.id).set(dst.data ? dst.data(n) : serialize(n));
+    // Firestore confirms writes only once online; offline, the local copy is enough to carry on.
+    const done = (p, sp) => (sp.fire && !navigator.onLine ? (p.catch(() => toast("Couldn't move that note. Try again.")), null) : p);
+    if (dst.local) saveLocalNow(); else await done(dst.col.doc(n.id).set(dst.data ? dst.data(n) : serialize(n)), dst);
     n._aclNew = false;
-    if (src.local) saveLocalNow(); else await src.col.doc(n.id).delete();
+    if (src.local) saveLocalNow(); else await done(src.col.doc(n.id).delete(), src);
     if (FB.user && target === "private") n.acl = null;
     if (!opts.quiet) toast(target === "shared" ? "Shared. Everyone you give access to this page can open and edit it." : "Private again. Only you can see it.");
     return true;
@@ -2660,10 +2673,16 @@ function fbCol(ref, q, merge) {
 const sharedRef = (id) => FB.f.doc(FB.db, "shared", id);
 async function startFirebase() {
   setSync("boot", "Connecting…");
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(() => {});
   try {
     const [app, a, f] = await Promise.all(["app", "auth", "firestore"].map((m) => import(`${FB_SDK}firebase-${m}.js`)));
     const fa = app.initializeApp(FB_CONFIG);
-    Object.assign(FB, { a, f, auth: a.getAuth(fa), db: f.getFirestore(fa), ready: true });
+    let db;
+    // Keep a copy of the notes on this device, so they open and save offline and sync when back online.
+    try { db = f.initializeFirestore(fa, { localCache: f.persistentLocalCache({ tabManager: f.persistentMultipleTabManager() }) }); }
+    catch { db = f.getFirestore(fa); }
+    Object.assign(FB, { a, f, auth: a.getAuth(fa), db, ready: true });
+    await fbFinishEmailLink();
   } catch {
     startLocal();
     $("sync").title = "Sign-in couldn't load, so notes are kept in this browser. Reload to try again.";
@@ -2677,8 +2696,8 @@ async function startFirebase() {
       startLocal(); refreshMetaIfOpen();
       if (/^#note=/.test(location.hash)) openModal(el("div", { class: "modal share-modal" },
         el("div", { class: "modal-head" }, el("h3", { text: "Open a shared note" }), el("button", { class: "icon-btn", type: "button", "aria-label": "Close", html: I.x, onclick: closeModal })),
-        el("div", { class: "share" }, el("p", { class: "share-note", text: "Someone shared a Folio note with you. Sign in with Google to open it." }),
-          el("button", { class: "primary", type: "button", text: "Sign in with Google", onclick: fbSignIn })))).querySelector(".primary").focus();
+        el("div", { class: "share" }, el("p", { class: "share-note", text: "Someone shared a Folio note with you. Sign in to open it." }),
+          el("button", { class: "primary", type: "button", text: "Sign in", onclick: fbSignIn })))).querySelector(".primary").focus();
       return;
     }
     fbStart(user);
@@ -2689,11 +2708,14 @@ function fbStart(user) {
   FB.user = user; FB.email = cleanEmail(user.email);
   S.mode = "cloud"; isOwner = true; canWriteShared = true;
   const shared = f.collection(FB.db, "shared");
-  SP.private = { col: fbCol(f.collection(FB.db, "users", user.uid, "notes")) };
-  SP.shared = { col: fbCol(shared, f.query(shared, f.where("members", "array-contains", FB.email)), true), data: fbData };
-  setSync("cloud", "Synced");
+  SP.private = { col: fbCol(f.collection(FB.db, "users", user.uid, "notes")), fire: true };
+  SP.shared = { col: fbCol(shared, f.query(shared, f.where("members", "array-contains", FB.email)), true), data: fbData, fire: true };
+  setSync("cloud", navigator.onLine ? "Synced" : "Offline");
   $("sync").title = `Synced as ${user.email}`;
+  addEventListener("online", () => { setSync("cloud", "Synced"); $("sync").title = `Synced as ${user.email}`; if (E.note) setSave("saved"); });
+  addEventListener("offline", () => { setSync("local", "Offline"); $("sync").title = "Offline. Changes are kept on this device and sync when you're back online."; });
   subscribeSpaces(() => { fbImportLocal(); afterLoad(); fbOpenFromHash(); });
+  R.room = fbRoom(user);
 }
 // The first time someone signs in on a device, bring along the notes they kept in this browser.
 function fbImportLocal() {
@@ -2708,8 +2730,42 @@ function fbImportLocal() {
   prefs.set(key, true);
   if (list.length) toast(`Added ${list.length} ${list.length === 1 ? "note" : "notes"} from this browser to your account.`);
 }
-async function fbSignIn() {
+function fbSignIn() {
   if (!FB.ready) return;
+  const input = el("input", { type: "text", inputmode: "email", autocomplete: "email", placeholder: "you@example.com", "aria-label": "Email address" });
+  const send = el("button", { class: "ghost", type: "submit", text: "Email me a sign-in link" });
+  const form = el("form", { class: "share-add", onsubmit: async (e) => {
+    e.preventDefault();
+    const email = cleanEmail(input.value);
+    if (!isEmail(email)) { toast("Enter your email address."); input.focus(); return; }
+    send.disabled = true;
+    try {
+      await FB.a.sendSignInLinkToEmail(FB.auth, email, { url: location.origin + location.pathname + location.hash, handleCodeInApp: true });
+      prefs.set("signinEmail", email);
+      body.replaceChildren(el("p", { class: "share-note", text: `We sent a sign-in link to ${email}. Open it on this device to finish signing in. It can take a minute, and may land in spam.` }));
+    } catch (err) {
+      send.disabled = false;
+      toast(err && err.code === "auth/operation-not-allowed" ? "Email sign-in isn't turned on yet. Use Google for now." : "Couldn't send the link. Check the address and try again.");
+    }
+  } }, input, send);
+  const body = el("div", { class: "share" },
+    el("button", { class: "primary", type: "button", text: "Continue with Google", onclick: () => { closeModal(); fbGoogle(); } }),
+    el("h5", { text: "Or use your email" }), form,
+    el("p", { class: "share-note small", text: "No password needed. People share notes with the email you sign in with." }));
+  openModal(el("div", { class: "modal share-modal" },
+    el("div", { class: "modal-head" }, el("h3", { text: "Sign in to Folio" }), el("button", { class: "icon-btn", type: "button", "aria-label": "Close", html: I.x, onclick: closeModal })), body));
+  body.querySelector(".primary").focus();
+}
+// Finish signing in when the page was opened from an emailed link.
+async function fbFinishEmailLink() {
+  if (!FB.a.isSignInWithEmailLink(FB.auth, location.href)) return;
+  let email = prefs.get("signinEmail", "");
+  if (!email) email = cleanEmail(prompt("To finish signing in, enter the email address the link was sent to.") || "");
+  try { if (email) { await FB.a.signInWithEmailLink(FB.auth, email, location.href); prefs.set("signinEmail", ""); } }
+  catch { toast("That sign-in link has expired or was already used. Send a new one from Sign in."); }
+  history.replaceState(null, "", location.pathname + location.hash);
+}
+async function fbGoogle() {
   try { await FB.a.signInWithPopup(FB.auth, new FB.a.GoogleAuthProvider()); }
   catch (e) {
     const code = e && e.code;
@@ -2830,6 +2886,41 @@ function openShare(n) {
 
   const sc = openModal(box); sc.dataset.share = n.id;
   if (owner) box.querySelector(".share-add input").focus(); else box.querySelector(".modal-head button").focus();
+}
+
+// Who else is in a shared note, and which block they're in: shared/{noteId}/presence/{uid}.
+// Each person writes only their own entry, when they open a note or move to another block.
+function fbRoom(user) {
+  const f = FB.f;
+  const me = { name: user.displayName || (user.email || "").split("@")[0], photo: user.photoURL || "" };
+  let note = null, block = null, unsub = null, beat = 0;
+  const ref = (id) => f.doc(FB.db, "shared", id, "presence", user.uid);
+  const hue = (id) => { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 65% 48%)`; };
+  const write = () => { if (note && navigator.onLine) f.setDoc(ref(note), { ...me, block: block || null, at: Date.now() }).catch(() => {}); };
+  const leave = (id) => { if (id) f.deleteDoc(ref(id)).catch(() => {}); };
+  const watch = (id) => {
+    if (unsub) { unsub(); unsub = null; }
+    R.peers = []; renderPeers();
+    if (!id) return;
+    unsub = f.onSnapshot(f.collection(FB.db, "shared", id, "presence"), (snap) => {
+      const fresh = Date.now() - 75e3;
+      R.peers = snap.docs.filter((d) => d.id !== user.uid && (d.data().at || 0) > fresh).map((d) => {
+        const v = d.data();
+        R.names[d.id] = { name: String(v.name || "Someone"), avatarUrl: /^https:\/\//.test(v.photo || "") ? v.photo : "", color: hue(d.id) };
+        return { by: d.id, peer: d.id, kind: "viewer", presence: { note: id, block: typeof v.block === "string" ? v.block : null } };
+      });
+      renderPeers(); scheduleSide();
+    }, () => { R.peers = []; renderPeers(); });
+  };
+  addEventListener("pagehide", () => leave(note));
+  return {
+    presence(p) {
+      const next = (p && p.note) || null;
+      if (next !== note) { leave(note); note = next; block = p && p.block; watch(note); write(); clearInterval(beat); if (note) beat = setInterval(write, 30e3); }
+      else if (note && (p.block || null) !== block) { block = p.block || null; write(); }
+      return Promise.resolve();
+    },
+  };
 }
 
 /* =====================================================================
@@ -2991,7 +3082,7 @@ function toast(msg, undoFn) {
 function setSync(kind, text) { $("sync").dataset.state = kind; $("syncText").textContent = text; $("sync").title = text; }
 function setSave(s) {
   if (E.note && !E.note.trashed && !canEdit(E.note)) { $("statSave").textContent = "View only"; return; }
-  $("statSave").textContent = s === "saving" ? "Saving…" : s === "saved" ? "Saved" : s === "error" ? "Not saved" : "";
+  $("statSave").textContent = s === "saving" ? "Saving…" : s === "saved" ? "Saved" : s === "error" ? "Not saved" : s === "offline" ? "Saved on this device" : "";
 }
 
 /* ---------- modal: palette + shortcuts ---------- */
@@ -3174,7 +3265,7 @@ $("backBtn").addEventListener("click", () => selectNote(null));
 $("themeBtn").addEventListener("click", () => setTheme(S.theme === "system" ? "light" : S.theme === "light" ? "dark" : "system"));
 $("moreBtn").addEventListener("click", (e) => menuPop([
   { section: FB.user ? `Synced as ${FB.user.email}` : S.mode === "cloud" ? "Synced to your claude.ai account" : "Notes live in this browser" },
-  FB.ready && !FB.user ? { label: "Sign in with Google", desc: "Sync your notes and share them", icon: I.people, run: fbSignIn } : null,
+  FB.ready && !FB.user ? { label: "Sign in", desc: "Sync your notes and share them", icon: I.people, run: fbSignIn } : null,
   { label: "Export a backup (.json)", icon: I.download, run: exportJson },
   { label: "Export as Markdown (.md)", icon: I.download, run: exportMd },
   { label: "Import notes", desc: ".json backup, .md or .txt files", icon: I.upload, run: () => $("importInput").click() },
