@@ -23,6 +23,7 @@
   --accent-ink: #FFFFFF;
   --accent-soft: #E2E8FE;
   --hi: #FFE04A;
+  --quote: #B08500;   /* the quote bar: --hi is too pale to see on white */
   --hi-ink: #131A2A;
   --ok: #1E9A62;
   --danger: #C2361F;
@@ -45,7 +46,7 @@
     --bg: #0F1420; --card: #161D2C; --paper: #131927; --grid: #232C3F; --ink: #E6EAF2; --ink-2: #9AA5BA; --ink-3: #66718A;
     --line: #232B3C; --line-2: #2F394D; --code-bg: #1A2232;
     --cover: #090D17; --cover-ink: #DFE5F1; --cover-ink-2: #7D88A2; --cover-line: #1A2234; --cover-hover: #121A2A; --cover-active: #1D2A4D;
-    --accent: #8EA2FF; --accent-ink: #0B1020; --accent-soft: #1D2748; --hi: #E5C13A; --hi-ink: #10141B; --ok: #4CC38A; --danger: #F08672;
+    --accent: #8EA2FF; --accent-ink: #0B1020; --accent-soft: #1D2748; --hi: #E5C13A; --quote: #E5C13A; --hi-ink: #10141B; --ok: #4CC38A; --danger: #F08672;
     --c-sun: #E8B23A; --c-sage: #6DBB88; --c-sky: #5BA8E3; --c-rose: #E87891; --c-lilac: #A888E3;
     --shadow-sm: 0 1px 2px rgb(0 0 0 / .3);
     --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 10px 30px -6px rgb(0 0 0 / .5);
@@ -57,7 +58,7 @@
   --bg: #0F1420; --card: #161D2C; --paper: #131927; --grid: #232C3F; --ink: #E6EAF2; --ink-2: #9AA5BA; --ink-3: #66718A;
   --line: #232B3C; --line-2: #2F394D; --code-bg: #1A2232;
   --cover: #090D17; --cover-ink: #DFE5F1; --cover-ink-2: #7D88A2; --cover-line: #1A2234; --cover-hover: #121A2A; --cover-active: #1D2A4D;
-  --accent: #8EA2FF; --accent-ink: #0B1020; --accent-soft: #1D2748; --hi: #E5C13A; --hi-ink: #10141B; --ok: #4CC38A; --danger: #F08672;
+  --accent: #8EA2FF; --accent-ink: #0B1020; --accent-soft: #1D2748; --hi: #E5C13A; --quote: #E5C13A; --hi-ink: #10141B; --ok: #4CC38A; --danger: #F08672;
   --c-sun: #E8B23A; --c-sage: #6DBB88; --c-sky: #5BA8E3; --c-rose: #E87891; --c-lilac: #A888E3;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / .3);
   --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 10px 30px -6px rgb(0 0 0 / .5);
@@ -249,7 +250,7 @@ a.wl.missing { color: var(--ink-3); background: transparent; border: 1px dashed 
 .blk[data-t="todo"] .txt { text-decoration: line-through; text-decoration-color: transparent; text-decoration-thickness: 1.5px; transition: color .25s, text-decoration-color .25s; }
 .blk[data-t="todo"][data-c="1"] .txt { color: var(--ink-3); text-decoration-color: var(--ink-3); }
 
-.blk[data-t="quote"] .txt { border-left: 3px solid var(--hi); padding-left: 1rem; font-style: italic; color: var(--ink-2); }
+.blk[data-t="quote"] .txt { border-left: 4px solid var(--quote); padding-left: 1rem; font-style: italic; color: var(--ink-2); }
 .blk[data-t="callout"] { background: var(--accent-soft); border-radius: 12px; padding: .7rem 1rem .7rem calc(.8rem + var(--i) * 1.65rem); margin: .35rem 0; }
 .blk[data-t="callout"] .marker { color: var(--accent); }
 .blk[data-t="callout"] .marker svg { width: 18px; height: 18px; }
